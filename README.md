@@ -2,7 +2,9 @@
 
 面向 NAS 的影视刮削与归档工具：从 OpenList 提供的 WebDAV 待刮削目录发现影视文件，通过 TMDB 获取元数据，将 NFO、海报、背景图、演员头像和所需字幕写回 WebDAV，全部必需项验证通过后移动整个媒体目录。
 
-**当前状态：P0 验证工具已实现，部分实机验收待补齐。** 已在本机连接真实 WebDAV 完成小文件读回、Range 指纹、目录 MOVE 与媒体样本探测，完成射手公开样本验证及 Kodi 基础 NFO / 本地图片导入和刷新。Kodi 真正断网、大型实际片源、NAS 故障注入及飞牛 Docker 未验证；尚无产品应用或 Docker 镜像。详见 [兼容性记录](docs/compatibility.md)。
+**当前状态：P1 工程基础已实现。** FastAPI / React 应用、加密配置、管理员登录、SQLite / Alembic、持久化 Worker 和开发容器可运行；支持只读 WebDAV 连接检查、任务暂停 / 重试和重启恢复。完整刮削、字幕与归档仍待 P2 / P3，当前不移动媒体。P0 的 Kodi 真正断网、大型实际片源及真实故障验证仍待补齐。详见 [开发进度](docs/progress.md)与[兼容性记录](docs/compatibility.md)。
+
+本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
 
 ## 产品约定
 
@@ -34,6 +36,7 @@
 ## 设计与开发
 
 - [P0 工具运行说明](docs/p0-tools.md)
+- [P1 开发与容器启动](docs/development.md)
 - [兼容性与实测边界](docs/compatibility.md)
 - [开发进度与交接](docs/progress.md)
 - [总体架构与业务规则](docs/architecture.md)
