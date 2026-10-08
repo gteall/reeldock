@@ -8,6 +8,7 @@
 - [图片 URL 构造](https://developer.themoviedb.org/docs/image-basics)：使用 configuration 提供的基址 / 规格与资源 path 构造图片 URL。
 - [图片语言](https://developer.themoviedb.org/docs/image-languages)及[电影图片接口](https://developer.themoviedb.org/reference/movie-images)：图片语言过滤会影响候选，设计需显式考虑多语言 / 无语言回退。
 - [电影演职员](https://developer.themoviedb.org/reference/movie-credits)及[单集详情](https://developer.themoviedb.org/reference/tv-episode-details)：电影与剧集分别适配到统一领域对象。
+- [电影详情](https://developer.themoviedb.org/reference/movie-details)、[剧级详情](https://developer.themoviedb.org/reference/tv-series-details)、[官方 OpenAPI](https://developer.themoviedb.org/openapi/tmdb-api.json)和[语言说明](https://developer.themoviedb.org/docs/languages)：实现区分详情的 original_language 与请求本地化语言参数。按用户最新规则，基础资产完成后以 original_language 分流，中文集合默认 zh / cn；这是项目业务策略，不是从原始语言推导制片国家或实际文件音轨。
 - [限流说明](https://developer.themoviedb.org/docs/rate-limiting)：处理 429，不把旧限流机制当作当前固定额度。
 
 本次未提供 TMDB 凭证，未完成带凭证的搜索、详情及图片下载测试；这些属于 P0 / P2 验证。
