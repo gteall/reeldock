@@ -49,17 +49,21 @@ class AppConfig(BaseModel):
     output_path: str
     tmdb_token: SecretStr | None = None
     proxy_url: str | None = None
+    tmdb_proxy_url: str | None = None
     redirect_hosts: list[str] = Field(default_factory=list, max_length=20)
     http_timeout_seconds: float = Field(default=15, ge=1, le=120)
     probe_timeout_seconds: int = Field(default=45, ge=1, le=300)
     probe_max_bytes: int = Field(default=67108864, ge=16384, le=1073741824)
     chinese_languages: list[str] = Field(default_factory=lambda: ["zh", "cn"], min_length=1)
     policy_version: int = Field(default=1, ge=1)
+    stable_seconds: int = Field(default=600, ge=1, le=86400)
+    actor_limit: int = Field(default=20, ge=0, le=500)
+    actor_policy: str = Field(default="available_only", pattern=r"^(available_only|strict)$")
 
     _url = field_validator("webdav_url")(validate_url)
     _paths = field_validator("input_path", "output_path")(normalize_path)
 
-    @field_validator("proxy_url")
+    @field_validator("proxy_url", "tmdb_proxy_url")
     @classmethod
     def proxy(cls, value: str | None) -> str | None:
         return validate_url(value) if value else None
@@ -130,6 +134,8 @@ class Person(BaseModel):
     external_id: str
     name: str
     profile: Artwork | None = None
+    role: str = ""
+    order: int = 0
 
 
 class Movie(BaseModel):
@@ -138,6 +144,18 @@ class Movie(BaseModel):
     title: str
     original_language: str | None = None
     year: int | None = None
+    imdb_id: str | None = None
+    original_title: str = ""
+    overview: str = ""
+    tagline: str = ""
+    release_date: str = ""
+    genres: list[str] = Field(default_factory=list)
+    rating: float | None = None
+    votes: int = 0
+    directors: list[str] = Field(default_factory=list)
+    writers: list[str] = Field(default_factory=list)
+    poster_path: str | None = None
+    backdrop_path: str | None = None
 
 
 class Series(Movie):

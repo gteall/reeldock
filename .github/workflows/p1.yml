@@ -1,4 +1,4 @@
-name: P1 foundation
+name: P1 + P2 application
 on:
   push:
   pull_request:
@@ -14,8 +14,8 @@ jobs:
           version: '0.9.10'
           python-version: '3.12'
       - run: uv sync --frozen
-      - run: uv run ruff check backend scripts/p1_*.py
-      - run: uv run ruff format --check backend scripts/p1_*.py
+      - run: uv run ruff check backend scripts/p1_*.py scripts/p2_*.py
+      - run: uv run ruff format --check backend scripts/p1_*.py scripts/p2_*.py
       - run: uv run pytest -q
       - run: uv build --wheel
   frontend:

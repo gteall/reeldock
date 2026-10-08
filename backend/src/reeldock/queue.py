@@ -101,6 +101,13 @@ def gate(session, package: Package, stage: str):
             raise ProviderError("final_manifest_not_remote_verified")
 
 
+def invalidate_package(package: Package, reason="context_changed"):
+    package.context_version += 1
+    package.base_status = "pending"
+    package.subtitle_status, package.subtitle_reason = "pending", reason
+    package.subtitle_version = package.manifest_version = None
+
+
 def revise_package(session, package: Package, **changes):
     """P2/P3 must use this when source, identity, language or policy changes.
 
@@ -112,10 +119,7 @@ def revise_package(session, package: Package, **changes):
     if any(getattr(package, key) != value for key, value in changes.items()):
         for key, value in changes.items():
             setattr(package, key, value)
-        package.context_version += 1
-        package.base_status = "pending"
-        package.subtitle_status, package.subtitle_reason = "pending", "context_changed"
-        package.subtitle_version = package.manifest_version = None
+        invalidate_package(package)
 
 
 class Queue:
@@ -133,7 +137,8 @@ class Queue:
             package = session.scalar(select(Package).where(Package.remote_path == path))
             if package is None:
                 package = Package(
-                    remote_path=path, kind="connection" if kind == "connection_check" else "movie"
+                    remote_path=path,
+                    kind="connection" if kind in {"connection_check", "scan"} else "movie",
                 )
                 session.add(package)
                 session.flush()
@@ -144,11 +149,15 @@ class Queue:
                 payload_hash=payload,
                 context_version=package.context_version,
                 config_revision=config_revision,
-                stage="connection_check" if kind == "connection_check" else Stage.MATCH,
+                stage=kind if kind in {"connection_check", "scan"} else Stage.MATCH,
             )
             session.add(task)
             session.flush()
-            stages = ["connection_check"] if kind == "connection_check" else STAGES
+            stages = (
+                [kind]
+                if kind in {"connection_check", "scan"}
+                else (STAGES[:2] if kind == "movie_base" else STAGES)
+            )
             for stage in stages:
                 session.add(TaskStep(task_id=task.id, stage=stage))
             emit(session, "task_submitted", task.id, kind=kind)
@@ -253,7 +262,7 @@ class Queue:
                 emit(session, "task_paused", task.id)
                 return None
             gate(session, package, task.stage)
-            if task.kind == "package_pipeline":
+            if task.kind in {"package_pipeline", "movie_base"}:
                 previous = STAGES[: STAGES.index(Stage(task.stage))]
                 completed = set(
                     session.scalars(
@@ -302,13 +311,15 @@ class Queue:
                 time.time(),
             )
             emit(session, "step_completed", task.id, stage=stage)
-            if stage == "connection_check" or stage == Stage.ARCHIVE:
+            if stage == Stage.BASE:
+                package.base_status = "remote_verified"
+            if stage in {"connection_check", "scan", Stage.ARCHIVE} or (
+                task.kind == "movie_base" and stage == Stage.BASE
+            ):
                 task.status = "completed"
                 self._release(task, package)
                 emit(session, "task_completed", task.id)
             else:
-                if stage == Stage.BASE:
-                    package.base_status = "remote_verified"
                 task.stage = STAGES[STAGES.index(Stage(stage)) + 1]
                 task.updated_at = time.time()
 

@@ -54,3 +54,32 @@ def client(runtime):
             {"Origin": "http://localhost:8000", "X-CSRF-Token": response.json()["csrf_token"]}
         )
         yield client
+
+
+@pytest.fixture(autouse=True)
+def p2_forbidden_services(request, monkeypatch):
+    """P2 cannot launch a probe process or contact Shooter, including error paths."""
+    if not request.node.path.name.startswith("test_p2_"):
+        return
+    import asyncio
+    import subprocess
+
+    import httpx
+
+    def process_forbidden(*args, **kwargs):
+        pytest.fail("P2 must not launch FFprobe, FFmpeg or any media subprocess")
+
+    async def async_process_forbidden(*args, **kwargs):
+        process_forbidden()
+
+    original_send = httpx.AsyncClient.send
+
+    async def send(client, request, *args, **kwargs):
+        if "shooter" in request.url.host:
+            pytest.fail("P2 must not contact Subtitle Provider")
+        return await original_send(client, request, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", process_forbidden)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", async_process_forbidden)
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", async_process_forbidden)
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)

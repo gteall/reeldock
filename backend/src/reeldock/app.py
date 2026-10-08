@@ -17,15 +17,17 @@ from reeldock.database import Database
 from reeldock.domain import ConfigUpdate, normalize_path
 from reeldock.models import (
     Admin,
+    Asset,
     AuthSession,
     Configuration,
     Event,
     LoginLimit,
+    MovieRecord,
     Package,
     Task,
     TaskStep,
 )
-from reeldock.queue import Queue
+from reeldock.queue import Queue, revise_package
 from reeldock.runtime import Runtime
 from reeldock.security import (
     SettingsStore,
@@ -54,7 +56,9 @@ class ConnectionCheck(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9:_-]+$")
 
 
-def create_app(runtime: Runtime | None = None, *, storage_factory=None) -> FastAPI:
+def create_app(
+    runtime: Runtime | None = None, *, storage_factory=None, metadata_factory=None
+) -> FastAPI:
     runtime = runtime or Runtime()
 
     @asynccontextmanager
@@ -77,6 +81,7 @@ def create_app(runtime: Runtime | None = None, *, storage_factory=None) -> FastA
             store,
             runtime,
             **({"storage_factory": storage_factory} if storage_factory else {}),
+            **({"metadata_factory": metadata_factory} if metadata_factory else {}),
         )
         app.state.db, app.state.store, app.state.queue = db, store, queue
         app.state.worker = worker
@@ -150,7 +155,7 @@ def create_app(runtime: Runtime | None = None, *, storage_factory=None) -> FastA
     def health():
         with app.state.db.sessions.begin() as session:
             session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": __version__, "phase": "P1", "archive_enabled": False}
+        return {"status": "ok", "version": __version__, "phase": "P2", "archive_enabled": False}
 
     @app.get("/api/auth/status")
     def auth_status():
@@ -266,12 +271,135 @@ def create_app(runtime: Runtime | None = None, *, storage_factory=None) -> FastA
         if not path.startswith(config.input_path + "/"):
             raise HTTPException(422, "package_must_be_below_input_directory")
         try:
-            task_id = app.state.queue.submit(
-                "package_pipeline", path, body.idempotency_key, revision
-            )
+            task_id = app.state.queue.submit("movie_base", path, body.idempotency_key, revision)
         except ValueError:
             raise HTTPException(409, "idempotency_key_conflict") from None
-        return {"task_id": task_id, "implementation": "foundation_only"}
+        return {"task_id": task_id, "implementation": "movie_base_only"}
+
+    @app.post("/api/scan", status_code=202, dependencies=[Depends(mutation)])
+    def scan(body: ConnectionCheck):
+        config, revision = app.state.store.load()
+        if not config:
+            raise HTTPException(409, "configuration_required")
+        try:
+            task_id = app.state.queue.submit("scan", ":scan", body.idempotency_key, revision)
+        except ValueError:
+            raise HTTPException(409, "idempotency_key_conflict") from None
+        return {"task_id": task_id}
+
+    def movie_view(session, row):
+        package = session.get(Package, row.package_id)
+        assets = list(
+            session.scalars(
+                select(Asset).where(Asset.package_id == package.id).order_by(Asset.relative_path)
+            )
+        )
+        latest = session.scalar(
+            select(Task)
+            .where(Task.package_id == package.id)
+            .order_by(Task.created_at.desc())
+            .limit(1)
+        )
+        return {
+            "id": package.id,
+            "path": package.remote_path,
+            "title": row.details.get("title") or row.title,
+            "year": row.details.get("year") or row.year,
+            "media_path": row.media_path,
+            "scan_status": row.scan_status,
+            "stable_since": row.stable_since,
+            "last_seen": row.last_seen,
+            "match_status": row.match_status,
+            "tmdb_id": package.tmdb_id,
+            "manual_id": row.manual_id,
+            "original_language": package.original_language,
+            "candidates": row.candidates,
+            "base_status": package.base_status,
+            "subtitle_status": "not_entered_p2",
+            "probe_status": "not_started",
+            "archive_enabled": False,
+            "error_code": row.error_code or (latest.error_code if latest else None),
+            "task_id": latest.id if latest else None,
+            "task_status": latest.status if latest else None,
+            "cast": [
+                {
+                    "id": p["external_id"],
+                    "name": p["name"],
+                    "role": p.get("role"),
+                    "path": p["path"],
+                    "source_has_image": bool(p["profile"]),
+                    "selected": p.get("selected", True),
+                }
+                for p in row.cast
+            ],
+            "assets": [
+                {
+                    "id": a.id,
+                    "path": a.relative_path,
+                    "kind": a.kind,
+                    "required": a.required,
+                    "status": a.status,
+                    "error_code": a.error_code,
+                    "managed": a.managed,
+                    "sha256": a.sha256,
+                    "remote_verified_at": a.remote_verified_at,
+                    "preview": "/api/assets/" + a.id + "/preview" if a.cache_key else None,
+                }
+                for a in assets
+            ],
+        }
+
+    @app.get("/api/movies", dependencies=[Depends(authenticated)])
+    def movies():
+        with app.state.db.sessions.begin() as session:
+            return {
+                "items": [
+                    movie_view(session, row)
+                    for row in session.scalars(select(MovieRecord).order_by(MovieRecord.title))
+                ]
+            }
+
+    @app.get("/api/movies/{package_id}", dependencies=[Depends(authenticated)])
+    def movie_detail(package_id: str):
+        with app.state.db.sessions.begin() as session:
+            row = session.get(MovieRecord, package_id)
+            if not row:
+                raise HTTPException(404, "movie_not_found")
+            return movie_view(session, row)
+
+    class ManualMatch(BaseModel):
+        tmdb_id: str = Field(pattern=r"^[1-9]\d{0,9}$")
+
+    @app.put("/api/movies/{package_id}/match", dependencies=[Depends(mutation)])
+    def manual_match(package_id: str, body: ManualMatch):
+        with app.state.db.sessions.begin() as session:
+            row, package = session.get(MovieRecord, package_id), session.get(Package, package_id)
+            if not row or not package:
+                raise HTTPException(404, "movie_not_found")
+            if package.lease_owner and (package.lease_until or 0) > time.time():
+                raise HTTPException(409, "package_busy_pause_first")
+            if body.tmdb_id != package.tmdb_id:
+                revise_package(session, package, tmdb_id=body.tmdb_id, original_language=None)
+                package.base_required = []
+                row.details, row.cast, row.artwork = {}, [], []
+            row.manual_id, row.match_status, row.error_code = body.tmdb_id, "pending", None
+            session.add(Event(code="manual_tmdb_id_selected", details={"package_id": package_id}))
+        return {"accepted": True}
+
+    @app.get("/api/assets/{asset_id}/preview", dependencies=[Depends(authenticated)])
+    def preview(asset_id: str):
+        with app.state.db.sessions.begin() as session:
+            asset = session.get(Asset, asset_id)
+            if not asset or asset.kind not in {"nfo", "poster", "fanart", "actor"}:
+                raise HTTPException(404, "preview_not_available")
+            body = app.state.worker.movies.cache.get(asset.cache_key)
+            if body is None:
+                raise HTTPException(404, "preview_cache_missing_retry")
+            return Response(
+                body,
+                media_type="text/plain; charset=utf-8" if asset.kind == "nfo" else "image/jpeg",
+                headers={"Content-Security-Policy": "default-src 'none'; sandbox"},
+            )
 
     def serialize_task(session, task):
         package = session.get(Package, task.package_id)

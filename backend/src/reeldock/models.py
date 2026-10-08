@@ -89,6 +89,35 @@ class Asset(Base):
     remote_verified_at: Mapped[float | None] = mapped_column(Float)
     verified_version: Mapped[int | None] = mapped_column(Integer)
     error_code: Mapped[str | None] = mapped_column(String(80))
+    cache_key: Mapped[str | None] = mapped_column(String(64))
+    managed: Mapped[bool] = mapped_column(Boolean, default=False)
+    remote_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_tmdb_id: Mapped[str | None] = mapped_column(String(32))
+
+
+class MovieRecord(Base):
+    __tablename__ = "movie_records"
+    package_id: Mapped[str] = mapped_column(ForeignKey("packages.id"), primary_key=True)
+    title: Mapped[str] = mapped_column(Text, default="")
+    year: Mapped[int | None] = mapped_column(Integer)
+    media_path: Mapped[str | None] = mapped_column(Text)
+    stable_since: Mapped[float] = mapped_column(Float, default=time.time)
+    last_seen: Mapped[float] = mapped_column(Float, default=time.time)
+    scan_status: Mapped[str] = mapped_column(String(40), default="waiting_stable")
+    match_status: Mapped[str] = mapped_column(String(40), default="pending")
+    manual_id: Mapped[str | None] = mapped_column(String(32))
+    candidates: Mapped[list] = mapped_column(JSON, default=list)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    cast: Mapped[list] = mapped_column(JSON, default=list)
+    artwork: Mapped[list] = mapped_column(JSON, default=list)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class ProviderCache(Base):
+    __tablename__ = "provider_cache"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    body: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[float] = mapped_column(Float)
 
 
 class Task(Base):

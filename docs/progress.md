@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-P1 工程基础已实施：前后端、本地持久化配置 / 任务 / 事件、包级租约、检查点、登录、只读连接检查和开发容器可运行，已验证重启恢复。完整刮削与归档留待 P2 / P3，当前不移动实际媒体。P0 已完成部分真实 WebDAV / 射手 / Kodi 联调，**完整 P0 仍未验收完成**：Kodi 真正断网、大型实际片源、真实 NAS 故障注入及版本信息待补齐。按用户本次明确要求推进 P1，不把 P0 待验项标记为完成。
+P2 电影基础刮削已实施：扫描 / 稳定窗口、TMDB 匹配与人工 ID、中文文本 / 图片回退、Kodi NFO / 图片 / 演员资产、上传读回验证、现存资产保护和局部恢复均可运行。真实 TMDB 只读与专用 WebDAV 小资产上传已通过，Mock 完整闭环通过；真实电影包及本次产物 Kodi / 飞牛验收未验证。P2 任务停在基础验证，**视频内容读取、媒体探测、射手、最终 manifest 和自动归档均关闭**。P0 真正断网 Kodi、大型片源、真实 NAS 故障和精确版本信息仍待补齐，不把它们标为完成。
 
 已完成：
 
@@ -19,6 +19,7 @@ P1 工程基础已实施：前后端、本地持久化配置 / 任务 / 事件�
 - 添加 GitHub Actions 离线回归工作流，完成 44 项本机自动化测试。兼容边界见 [compatibility.md](compatibility.md)。
 - 实施 P1 FastAPI / React 应用、uv / pnpm 锁文件、Alembic 首次迁移、加密配置、管理员登录与来源 / CSRF 校验。
 - 实施数据库任务领取、包租约 / 心跳及代次校验、幂等键、检查点、退避重试、暂停 / 继续与启动恢复；显式建立基础资产 → 字幕 → 最终清单 → 归档门禁。
+- 完成 P2 后端 101 项、前端 4 项测试、wheel / 静态资源 / 开发镜像构建和 9 项容器持久化烟测；真实 TMDB 与专用 WebDAV 基础资产上传通过。
 - 通过 P1 后端 65 项、前端 4 项、P0 回归 44 项测试；完成后端 wheel、前端静态资源和本机开发镜像构建，容器重启持久化烟测通过。
 
 ## 阶段状态
@@ -27,7 +28,7 @@ P1 工程基础已实施：前后端、本地持久化配置 / 任务 / 事件�
 | --- | --- | --- |
 | P0 外部能力验证 | 工具完成，部分实机验收待补 | 离线回归及真实 WebDAV / 射手 / Kodi 导入刷新已通过；断网、大型片源和真实故障待验 |
 | P1 工程基础 | 已完成本阶段验收 | 本机 / 开发容器启动、配置与任务持久化、竞争领取 / 恢复测试通过；实际刮削及 MOVE 关闭 |
-| P2 电影基础刮削 | 未开始 | 尚无正式 TMDB / WebDAV 刮削闭环 |
+| P2 电影基础刮削 | 已完成实现与 Mock 验收，真实分项通过 | 真实 TMDB、WebDAV 资产上传通过；真实电影包、P2 Kodi / 飞牛未验证 |
 | P3 字幕与归档 | 未开始 | 规则已设计，尚无实现 |
 | P4 电视剧与完整 UI | 未开始 | 尚无实现 |
 | P5 NAS 发布 | 未开始 | 已有 P1 开发镜像；尚无正式镜像发布 / 飞牛实机验收 |
@@ -42,7 +43,7 @@ P1 工程基础已实施：前后端、本地持久化配置 / 任务 / 事件�
 
 ## 下一步
 
-进入 P2：实现电影扫描 / 稳定窗口、TMDB MetadataProvider、基础 NFO / 图片 / .actors 上传读回验证及资产状态页面，继续保持媒体探测、射手及归档关闭。真实 TMDB 联调需要用户在设置页保存凭证；P1 仅保存凭证，不请求 TMDB。开发启动与扩展入口见 [development.md](development.md)。
+P2 使用与复验见 [p2-tools.md](p2-tools.md)，启动见 [development.md](development.md)。下一阶段按 P3 提示词实现字幕策略、最终清单与安全归档；保留当前基础门禁和 original_language 语义。进入 P3 前需把本次 OpenList 忽略 PUT 条件头的事实纳入并发 / 写入信任边界，不能假设客户端 stat 是原子 CAS。
 
 P0 待验仍需补充精确 OpenList 版本 / 存储驱动；在有隔离条件时验证 Kodi 真正断网且无缓存的新 ID。大型 MKV / MP4 与本地副本、真实故障注入均留作明确未验证。飞牛 NAS 正式部署和发布在 P5。
 
@@ -96,6 +97,42 @@ P0 待验仍需补充精确 OpenList 版本 / 存储驱动；在有隔离条件�
 验证用本机 API、Mock 服务和开发 Compose 容器已停止，避免占用正式开发端口；普通 Compose 数据卷保留。临时 UI 仅使用独立生成式数据，用户 `.env.p0` 未复制进产品数据库或镜像。
 
 下一阶段从 P2 提示词开始，复用 Provider、资产版本与 Worker 检查点；不要启用任何提前探测路径。新配置页面可先保存 TMDB 凭证，P2 再进行真实接口验证。
+
+## P2 实施记录：2026-10-09
+
+分支沿用 `codex/p1-foundation`，沿用草稿 [PR #1](https://github.com/gteall/reeldock/pull/1)，未合并、未发布镜像或版本。
+
+交付 `scanner.py`、`matching.py`、`providers/tmdb.py`、`exporter.py`、`cache.py`、`pipeline.py`，Alembic `0002`，电影 / 匹配 / 资产预览 API，React 电影列表与详情页，P2 验证 / UI fixture 工具、Pillow 锁定依赖，以及 [P2 指南](p2-tools.md)。保留原 P1 登录、配置加密、租约和任务恢复；新 `movie_base` 任务只建立匹配与基础验证两个步骤，不推进字幕。
+
+扫描仅登记目录信息；至少两次稳定窗口观察，源变化 / 下载临时文件 / 多媒体混装 / 疑似电视剧均阻塞。明确 TMDB / IMDb ID 优先，否则采用片名 / 年份评分，歧义需人工确认。TMDB 支持 API Token / Key、中文字段级回退、图片回退、configuration 和共享缓存、有限 429 退避。原始语言独立保存，不被 localized 请求覆盖。
+
+NFO 无探测依赖，未知 fileinfo / streamdetails 省略，头像按 Kodi 的 `.actors` 名称约定保存；默认前 20 位有来源者必需，可选全部 / strict，来源无图和未选择明确区分。已有 ID 一致的 NFO 逐字节保留，包括人工内容和观看进度；解释前缓存原件，冲突 / 无 ID / 坏 XML 不覆盖。有效人工图片可复用；影坞旧 ID 资产不能自动重绑新电影。统一上传器先持久化缓存 / 哈希，PUT 后完整读回比对；包租约 / 上下文与最终源文件信息快照都复核，已验证项与中断后的计划内容可恢复。
+
+实际运行记录：
+
+| 命令 / 操作 | 结果与证据范围 |
+| --- | --- |
+| `uv sync --frozen`、`uv build --wheel` | 锁定依赖与后端打包通过；新增 Pillow 解码验证，迁移随包交付 |
+| `uv run ruff check backend scripts/p1_*.py scripts/p2_*.py`、对应 `ruff format --check` | 通过 |
+| `uv run pytest -q` | **101 项通过**；含 P1 回归与 P2 匹配冲突、字段 / 图片回退、429、坏图片、PUT 内容不一致、超时有 / 无目标核对、现存 NFO / 观看进度保护、图片复用、源 / ID / 语言 / 必需集合变更、局部重试与中断恢复、原 P1 数据迁移保留、管理鉴权 / 预览 |
+| `uv run python scripts/p2_verify.py mock --output reports/p2-mock.json` | P2 Mock 扫描 → TMDB → NFO / 图片 → 上传验证闭环及故障矩阵通过；P2 测试硬性拒绝视频 / 字幕内容读取、媒体子进程、射手或 MOVE，禁止调用次数为零 |
+| `pnpm format:check`、`pnpm test`、`pnpm build`（frontend） | 格式、4 项传输测试、TypeScript 和 Vite 构建通过 |
+| `uv run python scripts/p2_verify.py tmdb --output reports/p2-tmdb.json` | 用户本地凭证 + 代理，真实电影 550 的中文详情 / 原始语言 en、configuration、75 位演员、海报 / 背景 / 一个头像下载与解码通过；同次缓存请求复用通过；最初直连超时明确记录，没有输出密钥 |
+| `uv run python scripts/p2_verify.py webdav --output reports/p2-webdav.json` | 专用随机子目录内自建 NFO / poster / fanart / .actors 4 项 SHA-256 全量读回通过，客户端拒绝现有目标；零视频内容读取 / 探测 / 射手 / MOVE；这是资产分项验证，非真实电影全链路 |
+| OpenList 条件 PUT 能力核对 | **If-None-Match 被忽略，返回 201**。首轮正确报失败；补写前 stat 保护后重测，报告分开记录 client guard passed / server conditional unsupported。仅对同内容自建哨兵测试，未覆盖用户资产 |
+| 本机浏览器（隔离 Mock） | 登录、首次扫描等待稳定、第二次稳定、基础刮削完成、资产详情和 NFO 预览通过；明确显示 en、实际音轨未探测、字幕尚未进入；截图 `reports/p2-ui.png` 本地忽略，不当成真实 Kodi 验证 |
+| `docker compose -f compose.dev.yaml build --build-arg NODE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim --build-arg PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim-bookworm` | 最终开发镜像构建通过，沿用 P1 已验证的公共镜像源参数；无镜像发布 |
+| `uv run python scripts/p1_container_smoke.py` | 最终镜像 9 项隔离烟测通过：健康、静态前端、加密配置、幂等、重启会话 / 配置 / 暂停任务 / 事件、未扫描包真实阻塞于 package_not_stable；仅本机 Mock 配置 |
+| P0 非媒体单元回归 | 41 通过 / 3 跳过；通过 unittest 显式跳过整个 MediaTests 类，不运行 P0 的 FFmpeg / FFprobe 专用能力矩阵 |
+| `git diff --check` 与提交前敏感内容检查 | 通过；`.env.p0` / `.env.p2`、数据库、报告、素材与构建产物均忽略 |
+
+实际边界与交接：
+
+- OpenList 的条件 PUT 不可靠，客户端存在性检查和包租约只保护影坞自身并发；不能保证与其它程序同时写同一路径时的原子互斥。刮削包须独占管理，详见 compatibility.md。
+- 真实 WebDAV 生成了两组专用小资产测试子目录，保留供人工核对，未 DELETE；没有读取用户片源内容、写正式电影包或 MOVE。`.env.p2` 仅供验证工具，不会自动导入产品配置，使用应用需在设置页单独保存。
+- 真实电影包完整闭环、P2 新产物 Kodi 导入 / 刷新 / 真正断网、飞牛实机、真实大库和外部并发仍未验证。P0 未验项保持原状态。
+- 事件仍为 REST 游标轮询；电视剧与完整批量 / SSE UI 留待 P4，字幕 / manifest / MOVE 留待 P3，正式 NAS 发布留待 P5。
+- 前端 Ant Design 主块约 1.09 MB / gzip 348 KB，有体积提示；Starlette 测试客户端有 HTTPX 弃用提示，当前锁文件构建 / 测试通过。
 
 ## 后续阶段交接格式
 

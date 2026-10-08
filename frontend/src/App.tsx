@@ -31,10 +31,12 @@ import {
 } from '@ant-design/icons'
 import { api, ApiError, explain, setCsrf } from './api'
 import type { Config, Session, Task, TaskEvent } from './api'
+import { MoviesPage } from './MoviesPage'
 
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
   connection_check: '只读连接检查',
+  scan: '目录扫描',
   match_metadata: 'TMDB 匹配',
   base_assets_verified: '基础资产远程验证',
   subtitle_policy: '字幕策略',
@@ -129,7 +131,7 @@ function LoginPage({ onLogin }: { onLogin: (value: Session) => void }) {
             进入控制台
           </Button>
         </Form>
-        <Text type="secondary">工程基础 · P1</Text>
+        <Text type="secondary">电影基础刮削 · P2</Text>
       </Card>
     </div>
   )
@@ -159,6 +161,9 @@ function SettingsPage() {
     if (query.data)
       form.setFieldsValue({
         http_timeout_seconds: 15,
+        stable_seconds: 600,
+        actor_limit: 20,
+        actor_policy: 'available_only',
         probe_timeout_seconds: 45,
         ...query.data,
         probe_max_mib: (query.data.probe_max_bytes ?? 67108864) / 1048576,
@@ -264,8 +269,8 @@ function SettingsPage() {
             label="TMDB 凭证"
             extra={
               query.data?.tmdb_token_set
-                ? '已配置 · 留空保留，P2 启用调用'
-                : 'P2 接入 TMDB，可先保存凭证'
+                ? '已配置 · 留空保留现有凭证'
+                : '填写后用于 TMDB 元数据和图片查询'
             }
           >
             <Input.Password
@@ -275,6 +280,13 @@ function SettingsPage() {
           </Form.Item>
           <Form.Item name="clear_tmdb_token" valuePropName="checked">
             <Checkbox>清除 TMDB 凭证</Checkbox>
+          </Form.Item>
+          <Form.Item
+            name="tmdb_proxy_url"
+            label="TMDB 专用代理（可选）"
+            extra="仅 TMDB API / 图片使用，适合 WebDAV 直连、TMDB 走代理。"
+          >
+            <Input placeholder="http://127.0.0.1:7890" />
           </Form.Item>
           <Form.Item name="proxy_url" label="HTTP(S) 代理（可选）">
             <Input placeholder="http://proxy.example:7890" />
@@ -290,11 +302,31 @@ function SettingsPage() {
             <InputNumber min={1} max={120} />
           </Form.Item>
         </Card>
+        <Card title="扫描与演员策略" className="form-card">
+          <Form.Item
+            name="stable_seconds"
+            label="稳定窗口（秒）"
+            extra="至少两次扫描文件集合、大小和版本一致；默认 600 秒。"
+          >
+            <InputNumber min={1} max={86400} />
+          </Form.Item>
+          <Form.Item name="actor_limit" label="演员范围" extra="默认前 20 位；0 表示全部。">
+            <InputNumber min={0} max={500} />
+          </Form.Item>
+          <Form.Item name="actor_policy" label="头像要求">
+            <Segmented
+              options={[
+                { label: '仅来源有图者必需', value: 'available_only' },
+                { label: '所选演员必须有图', value: 'strict' },
+              ]}
+            />
+          </Form.Item>
+        </Card>
         <Card title="后续字幕阶段预算" className="form-card">
           <Alert
             type="info"
             showIcon
-            title="基础资产全部远程验证后，才允许进入字幕阶段。P1 不启动探测。"
+            title="基础资产全部远程验证后，才允许进入字幕阶段。P2 不启动探测和字幕请求。"
           />
           <div className="field-pair">
             <Form.Item name="probe_timeout_seconds" label="探测时限（秒）">
@@ -641,13 +673,14 @@ export default function App() {
           selectedKeys={[page]}
           onClick={({ key }) => setPage(key)}
           items={[
+            { key: 'movies', icon: <PlayCircleOutlined />, label: '电影与资产' },
             { key: 'settings', icon: <SettingOutlined />, label: '连接与配置' },
             { key: 'tasks', icon: <ApartmentOutlined />, label: '任务中心' },
             { key: 'events', icon: <ReloadOutlined />, label: '运行事件' },
           ]}
         />
         <div className="sidebar-bottom">
-          <Tag color="cyan">P1 · 工程基础</Tag>
+          <Tag color="cyan">P2 · 电影基础刮削</Tag>
           <p>归档执行未启用</p>
         </div>
       </aside>
@@ -655,7 +688,13 @@ export default function App() {
         <header>
           <span>
             影坞控制台 <span className="header-slash">/</span>{' '}
-            {page === 'settings' ? '配置' : page === 'tasks' ? '任务' : '事件'}
+            {page === 'movies'
+              ? '电影'
+              : page === 'settings'
+                ? '配置'
+                : page === 'tasks'
+                  ? '任务'
+                  : '事件'}
           </span>
           <Space>
             <Text type="secondary">{session.data.username}</Text>
@@ -669,21 +708,31 @@ export default function App() {
             <div>
               <span className="eyebrow">REELDOCK / {page.toUpperCase()}</span>
               <Title level={2}>
-                {page === 'settings' ? '连接与配置' : page === 'tasks' ? '任务中心' : '运行事件'}
+                {page === 'movies'
+                  ? '电影与资产'
+                  : page === 'settings'
+                    ? '连接与配置'
+                    : page === 'tasks'
+                      ? '任务中心'
+                      : '运行事件'}
               </Title>
               <Paragraph type="secondary">
-                {page === 'settings'
-                  ? '连接远程存储，为媒体工作流准备一个可靠的起点。'
-                  : page === 'tasks'
-                    ? '查看持久化阶段、检查点与错误，按需暂停或重试。'
-                    : '每一次状态变化都有记录，重启之后仍可追溯。'}
+                {page === 'movies'
+                  ? '查看匹配、随片图片和基础资产远程验证结果。'
+                  : page === 'settings'
+                    ? '连接远程存储，为媒体工作流准备一个可靠的起点。'
+                    : page === 'tasks'
+                      ? '查看持久化阶段、检查点与错误，按需暂停或重试。'
+                      : '每一次状态变化都有记录，重启之后仍可追溯。'}
               </Paragraph>
             </div>
             <Tag icon={<CheckCircleOutlined />} color="success">
               本地持久化
             </Tag>
           </div>
-          {page === 'settings' ? (
+          {page === 'movies' ? (
+            <MoviesPage />
+          ) : page === 'settings' ? (
             <SettingsPage />
           ) : page === 'tasks' ? (
             <TasksPage />
@@ -692,10 +741,7 @@ export default function App() {
           )}
           <footer>
             ReelDock · 影坞{' '}
-            <span>
-              This product uses the TMDB API but is not endorsed or certified by TMDB. · TMDB 接入待
-              P2
-            </span>
+            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
           </footer>
         </main>
       </div>

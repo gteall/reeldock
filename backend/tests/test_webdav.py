@@ -183,13 +183,41 @@ async def test_range_success_short_read_and_timeout(config_body):
             await storage.list("/incoming")
 
 
-async def test_p1_never_issues_remote_writes(config_body):
+async def test_media_writes_and_archive_stay_disabled(config_body):
     def forbidden(request):
         pytest.fail("No HTTP call allowed for P1 writes")
 
     async with provider(config_body, forbidden) as storage:
-        with pytest.raises(ProviderError, match="storage_writes_disabled_p1"):
+        with pytest.raises(ProviderError, match="storage_asset_write_rejected"):
             await storage.put("/file", b"data")
         with pytest.raises(ProviderError, match="archive_disabled_p1"):
             await storage.move("/source", "/target")
         assert not (await storage.capabilities())["move_enabled"]
+
+
+async def test_p2_put_sends_condition_and_rejects_existing_before_write(config_body):
+    calls = []
+    exists = False
+
+    def handle(request):
+        nonlocal exists
+        calls.append(request.method)
+        if request.method == "PROPFIND":
+            if not exists:
+                return httpx.Response(404)
+            return httpx.Response(
+                207,
+                content=b'<d:multistatus xmlns:d="DAV:"><d:response>'
+                b"<d:href>/dav/incoming/poster.jpg</d:href><d:propstat>"
+                b"<d:status>HTTP/1.1 200 OK</d:status><d:prop>"
+                b"<d:resourcetype/></d:prop></d:propstat></d:response></d:multistatus>",
+            )
+        assert request.method == "PUT" and request.headers["If-None-Match"] == "*"
+        exists = True
+        return httpx.Response(201)
+
+    async with provider(config_body, handle) as storage:
+        await storage.put("/incoming/poster.jpg", b"bytes")
+        with pytest.raises(ProviderError, match="storage_conflict"):
+            await storage.put("/incoming/poster.jpg", b"other")
+    assert calls == ["PROPFIND", "PUT", "PROPFIND"]

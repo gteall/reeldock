@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 from reeldock.domain import ProviderError
+from reeldock.pipeline import MoviePipeline
+from reeldock.providers.tmdb import TMDBProvider
 from reeldock.providers.webdav import WebDAVProvider
 from reeldock.queue import Claim, Queue
 
@@ -21,12 +23,25 @@ class Worker:
         *,
         handlers: dict[str, Handler] | None = None,
         storage_factory=WebDAVProvider,
+        metadata_factory=TMDBProvider,
     ):
         self.queue, self.settings, self.runtime = queue, settings, runtime
         self.storage_factory = storage_factory
         self.owner = uuid.uuid4().hex
-        # There are no production media, subtitle, or archive handlers in P1.
-        self.handlers = {"connection_check": self.connection_check, **(handlers or {})}
+        self.movies = MoviePipeline(
+            queue,
+            settings,
+            runtime,
+            storage_factory=storage_factory,
+            metadata_factory=metadata_factory,
+        )
+        self.handlers = {
+            "connection_check": self.connection_check,
+            "scan": self.movies.scan,
+            "match_metadata": self.movies.match,
+            "base_assets_verified": self.movies.base,
+            **(handlers or {}),
+        }
         self.slots: list[asyncio.Task] = []
 
     async def connection_check(self, claim: Claim) -> dict:
@@ -61,14 +76,16 @@ class Worker:
             if stage is None:
                 return
             if stage == "archive":
-                # Defense in depth: no injected/accidentally registered handler can MOVE in P1.
+                # Defense in depth: no injected/accidentally registered handler can MOVE in P1 / P2.
                 raise ProviderError("archive_disabled_p1")
             handler = self.handlers.get(stage)
             if handler is None:
                 raise ProviderError("stage_not_implemented_p1")
             checkpoint = await handler(replace(claim, stage=stage))
             self.queue.finish_step(claim, stage, checkpoint)
-            if stage == "connection_check":
+            if stage in {"connection_check", "scan"} or (
+                claim.kind == "movie_base" and stage == "base_assets_verified"
+            ):
                 return
 
     async def execute(self, claim: Claim):

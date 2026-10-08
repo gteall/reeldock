@@ -117,8 +117,8 @@ def main():
                 if result["status"] == "blocked":
                     break
                 time.sleep(0.05)
-            assert result["error_code"] == "stage_not_implemented_p1"
-            checks.append("honest_p1_stage_boundary")
+            assert result["error_code"] == "package_not_stable"
+            checks.append("honest_p2_base_stage_boundary")
         print(json.dumps({"status": "passed", "checks": checks, "real_media_moves": 0}))
     finally:
         # Only containers/volumes created by this invocation are removed.

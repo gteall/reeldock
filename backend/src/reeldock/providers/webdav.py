@@ -1,6 +1,6 @@
 """HTTPX WebDAV transport, carrying forward the P0 protocol findings.
 
-P1 only exposes directory connection checks. Writes are deliberately unavailable.
+P2 permits create-only small NFO/JPEG assets. MOVE remains unavailable.
 """
 
 import re
@@ -266,7 +266,34 @@ class WebDAVProvider:
             return body
 
     async def put(self, path: str, content: bytes) -> None:
-        raise ProviderError("storage_writes_disabled_p1")
+        from pathlib import PurePosixPath
+
+        name = PurePosixPath(path)
+        if name.suffix.lower() not in {".nfo", ".jpg"} or len(content) > 20 * 1024 * 1024:
+            raise ProviderError("storage_asset_write_rejected")
+        # The real OpenList target ignores If-None-Match on PUT. Always reject an
+        # existing resource ourselves too. This does not promise atomic exclusion
+        # against unrelated external writers; packages must be exclusively managed.
+        try:
+            await self.stat(path)
+        except ProviderError as error:
+            if error.code != "storage_not_found":
+                raise
+        else:
+            raise ProviderError("storage_conflict")
+        async with self.response(
+            "PUT", path, headers={"If-None-Match": "*"}, content=content
+        ) as response:
+            if response.status_code not in {200, 201, 204}:
+                raise status_error(response.status_code)
+
+    async def mkdir(self, path: str) -> None:
+        async with self.response("MKCOL", path) as response:
+            if response.status_code not in {200, 201, 204, 405}:
+                raise status_error(response.status_code)
+        entry = await self.stat(path)
+        if not entry.is_dir:
+            raise ProviderError("storage_conflict")
 
     async def move(self, source: str, target: str) -> None:
         raise ProviderError("archive_disabled_p1")
@@ -275,7 +302,10 @@ class WebDAVProvider:
         return {
             "list": True,
             "stat": True,
-            "write_enabled": False,
+            "write_enabled": True,
+            "create_only": True,
+            "conditional_create_verified": False,
+            "concurrent_external_writes_safe": False,
             "move_enabled": False,
             "remote_move_verified": False,
         }

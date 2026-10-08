@@ -1,6 +1,6 @@
-# P1 本地开发与交接
+# 本地开发与交接（P1 / P2）
 
-更新日期：2026-10-09。P1 是可运行的工程基础；完整刮削仍从 P2 开始，字幕与归档执行从 P3 开始。
+更新日期：2026-10-09。已实现 P1 工程基础和 P2 电影基础资产闭环；字幕与归档执行从 P3 开始。电影操作、凭证与真实验证范围见 [P2 指南](p2-tools.md)。
 
 ## 本机启动
 
@@ -114,7 +114,11 @@ REST 接口均位于 `/api`。除健康检查、初始化状态和登录外需�
 | --- | --- |
 | `GET/PUT /config` | 脱敏读取 / 乐观版本保存配置 |
 | `POST /connection-check` | 使用 `idempotency_key` 提交只读连接任务 |
-| `POST /tasks` | 手动登记待刮削目录下的包任务；P1 会诚实阻塞于未实现阶段 |
+| `POST /tasks` | 提交 movie_base 任务；只处理已扫描稳定的电影包，基础验证后结束 |
+| `POST /scan` | 持久化目录扫描任务；使用 idempotency_key |
+| `GET /movies`、`GET /movies/{id}` | 发现、候选、原始语言及逐项资产状态 |
+| `PUT /movies/{id}/match` | 人工指定电影 TMDB ID；保留现存 NFO 保护 |
+| `GET /assets/{id}/preview` | 登录后读取本地 NFO / 图片缓存 |
 | `GET /tasks`、`GET /tasks/{id}` | 当前状态及逐阶段检查点 |
 | `POST /tasks/{id}/pause|resume|retry` | 暂停、继续、局部重试 |
 | `GET /events?after=cursor&limit=100` | 持久化有序事件；保存 next_cursor，断线后继续读取 |
@@ -125,7 +129,7 @@ SQLite 开启 WAL、外键和 busy_timeout。短 `BEGIN IMMEDIATE` 事务将任�
 
 相同幂等键和负载返回原任务，变更负载复用相同键返回冲突。不同幂等键可以排队，但同一包只有一个租约持有者。租约含递增代次，旧 Worker 不能续租或提交结果；续租失败只取消当前任务，调度槽位继续领取后续任务。正常停止释放运行任务，非正常退出则等待租约到期后重新领取；不因应用刚重启就偷取仍有效的租约。暂停在当前步骤边界生效，不提前释放正在执行步骤的租约。失败只重试当前步骤；完成的检查点保留。源快照、TMDB ID、语言或策略改变时，通过 `revise_package` 保守失效相关证据并要求新任务；初次 TMDB 绑定在 P2 的匹配 handler 中建立基线。
 
-包任务预建步骤：
+P2 生产 movie_base 任务只预建前两个步骤并在基础验证后完成；后续完整 DAG 及其门禁保留用于 P3 扩展和队列测试：
 
 ```text
 match_metadata
@@ -135,15 +139,15 @@ match_metadata
   → archive
 ```
 
-前驱检查点未完成不能跨阶段。基础门禁使用冻结且非空的 `base_required` 集合，必须包含 NFO、海报和背景图，并覆盖全部必需基础资产（含策略要求的演员头像）；成员都必须有当前版本的 SHA-256 及远程验证时间。字幕 / 最终 manifest 不进入此集合。字幕和 manifest 也有独立版本门禁。实际 TMDB、字幕、探测 handler 尚未注册，不能产生伪造成功；archive 即使意外注入 handler 也硬性拒绝，WebDAV PUT / MOVE 本身同样关闭。
+前驱检查点未完成不能跨阶段。基础门禁使用冻结且非空的 `base_required` 集合，必须包含 NFO、海报和背景图，并覆盖全部必需基础资产（含策略要求的演员头像）；成员都必须有当前版本的 SHA-256 及远程验证时间。字幕 / 最终 manifest 不进入此集合。字幕和 manifest 也有独立版本门禁。P2 已注册扫描、TMDB 匹配与基础资产 handler，没有字幕或探测 handler；archive 仍硬性拒绝。WebDAV 仅开放创建小型 NFO / JPG 与 .actors 目录，MOVE 关闭。当前 OpenList 忽略 PUT 条件头，客户端存在性检查不能替代与其它程序的原子互斥，必须独占管理刮削包。
 
-P2 入口是 `providers/interfaces.py` 的 MetadataProvider、Worker 的匹配 / 基础 handler 和资产上传器；P3 才实现中文跳过、非中文探测 / 射手以及归档意图恢复。保留 `.actors` 与不依赖 streamdetails 的 NFO 约束。未来 handler 的远程写入必须结合租约和当前版本再次校验。
+P2 实现在 `scanner.py`、`matching.py`、`providers/tmdb.py`、`exporter.py` 和 `pipeline.py`；P3 才实现中文跳过、非中文探测 / 射手以及归档意图恢复。保留 `.actors` 与不依赖 streamdetails 的 NFO 约束。未来 handler 的远程写入必须结合租约和当前版本再次校验。
 
 ## 检查命令
 
 ```bash
-uv run ruff check backend scripts/p1_*.py
-uv run ruff format --check backend scripts/p1_*.py
+uv run ruff check backend scripts/p1_*.py scripts/p2_*.py
+uv run ruff format --check backend scripts/p1_*.py scripts/p2_*.py
 uv run pytest -q
 uv build --wheel
 cd frontend
@@ -154,4 +158,4 @@ cd ..
 python3.12 -m unittest discover -v
 ```
 
-P0 回归需要本机 FFmpeg / FFprobe；P1 不执行它们。CI 分开运行 P0、P1 后端 / 前端和开发容器检查。当前前端 Ant Design 主块约 1.05 MB（gzip 约 336 KB），构建给出体积提示但通过；后续完整 UI 再按页面拆分。Starlette 测试客户端对 HTTPX 的迁移弃用提示不影响目前锁定依赖的测试。
+P0 的专用能力测试可能执行 FFmpeg / FFprobe；P1 / P2 正式任务和 P2 测试不执行它们。CI 分开运行 P0、应用后端 / 前端和开发容器检查。当前前端 Ant Design 主块约 1.09 MB（gzip 约 348 KB），构建给出体积提示但通过；后续完整 UI 再按页面拆分。Starlette 测试客户端对 HTTPX 的迁移弃用提示不影响目前锁定依赖的测试。
