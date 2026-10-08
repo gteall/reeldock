@@ -19,7 +19,7 @@ P1 工程基础已实施：前后端、本地持久化配置 / 任务 / 事件�
 - 添加 GitHub Actions 离线回归工作流，完成 44 项本机自动化测试。兼容边界见 [compatibility.md](compatibility.md)。
 - 实施 P1 FastAPI / React 应用、uv / pnpm 锁文件、Alembic 首次迁移、加密配置、管理员登录与来源 / CSRF 校验。
 - 实施数据库任务领取、包租约 / 心跳及代次校验、幂等键、检查点、退避重试、暂停 / 继续与启动恢复；显式建立基础资产 → 字幕 → 最终清单 → 归档门禁。
-- 通过 P1 后端 64 项、前端 4 项、P0 回归 44 项测试；完成后端 wheel、前端静态资源和本机开发镜像构建，容器重启持久化烟测通过。
+- 通过 P1 后端 65 项、前端 4 项、P0 回归 44 项测试；完成后端 wheel、前端静态资源和本机开发镜像构建，容器重启持久化烟测通过。
 
 ## 阶段状态
 
@@ -78,7 +78,7 @@ P0 待验仍需补充精确 OpenList 版本 / 存储驱动；在有隔离条件�
 | --- | --- |
 | `uv sync --frozen`、`uv build --wheel` | 后端锁定依赖与 wheel 构建通过，迁移脚本 / 模板包含在 wheel 内 |
 | `uv run ruff check backend scripts/p1_*.py`、`uv run ruff format --check backend scripts/p1_*.py` | 通过 |
-| `uv run pytest -q` | 64 项通过；配置加密 / 重启、无效路径、来源与 CSRF、幂等并发提交、竞争领取、租约过期和旧持有者拒绝、心跳、暂停、局部重试与耗尽、前驱检查点 / 阶段顺序、运行中配置变化及上下文失效；含真实子进程非正常退出恢复 |
+| `uv run pytest -q` | 65 项通过；配置加密 / 重启、无效路径、来源与 CSRF、幂等并发提交、竞争领取、租约过期和旧持有者拒绝、心跳丢失后调度槽位继续工作、暂停、局部重试与耗尽、前驱检查点 / 阶段顺序、运行中配置变化及上下文失效；含真实子进程非正常退出恢复 |
 | `pnpm install --frozen-lockfile`、`pnpm format:check`、`pnpm test`、`pnpm build`（frontend） | 格式、4 项 API 传输测试、TypeScript 与 Vite 构建通过 |
 | `python3.12 -m unittest discover -v` | P0 的 44 项回归通过，保留 P0 的专用媒体能力测试与正式流程的区别 |
 | `uv run python scripts/p1_check_webdav.py --env-file .env.p0` | 新 HTTPX Provider 在真实 WebDAV 列出扫描目录 2 项、测试父目录 3 项；零视频内容读取、零写入、零 MOVE |

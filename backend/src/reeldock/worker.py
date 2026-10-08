@@ -50,32 +50,39 @@ class Worker:
             while True:
                 await asyncio.sleep(self.queue.lease_seconds / 3)
                 self.queue.heartbeat(claim)
-        except ProviderError:
+        except Exception:
+            # A renewal failure means ownership is uncertain. Cancel only this job,
+            # never the persistent polling slot that must accept subsequent work.
             job.cancel()
 
+    async def run_steps(self, claim: Claim):
+        while True:
+            stage = self.queue.begin_step(claim)
+            if stage is None:
+                return
+            if stage == "archive":
+                # Defense in depth: no injected/accidentally registered handler can MOVE in P1.
+                raise ProviderError("archive_disabled_p1")
+            handler = self.handlers.get(stage)
+            if handler is None:
+                raise ProviderError("stage_not_implemented_p1")
+            checkpoint = await handler(replace(claim, stage=stage))
+            self.queue.finish_step(claim, stage, checkpoint)
+            if stage == "connection_check":
+                return
+
     async def execute(self, claim: Claim):
-        heartbeat = asyncio.create_task(self.heartbeat(claim, asyncio.current_task()))
+        job = asyncio.create_task(self.run_steps(claim))
+        heartbeat = asyncio.create_task(self.heartbeat(claim, job))
         try:
-            while True:
-                stage = self.queue.begin_step(claim)
-                if stage is None:
-                    return
-                if stage == "archive":
-                    # Defense in depth: no injected/accidentally registered handler can MOVE in P1.
-                    raise ProviderError("archive_disabled_p1")
-                handler = self.handlers.get(stage)
-                if handler is None:
-                    raise ProviderError("stage_not_implemented_p1")
-                checkpoint = await handler(replace(claim, stage=stage))
-                self.queue.finish_step(claim, stage, checkpoint)
-                if stage == "connection_check":
-                    return
+            await job
         except asyncio.CancelledError:
             try:
                 self.queue.interrupt(claim)
             except ProviderError:
                 pass  # A stale lease owner must not mutate the new owner's state.
-            raise
+            if asyncio.current_task().cancelling():
+                raise  # Application shutdown cancels the polling slot too.
         except Exception as error:
             safe = (
                 error
@@ -89,7 +96,8 @@ class Worker:
             logger.warning("", extra={"safe_code": safe.code})
         finally:
             heartbeat.cancel()
-            await asyncio.gather(heartbeat, return_exceptions=True)
+            job.cancel()
+            await asyncio.gather(heartbeat, job, return_exceptions=True)
 
     async def loop(self):
         while True:

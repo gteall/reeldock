@@ -368,3 +368,43 @@ async def test_configuration_change_in_flight_rejects_stale_completion(
         task = session.get(Task, task_id)
         assert task.status == "blocked" and task.stage == Stage.MATCH
         assert task.error_code == "configuration_changed_submit_new_task"
+
+
+async def test_lost_lease_cancels_job_but_polling_slot_accepts_next_task(foundation, tmp_path):
+    db, store, queue = foundation
+    queue.lease_seconds = 0.18
+    first_id, _ = package(foundation, key="first", path="/incoming/first")
+    second_id, _ = package(foundation, key="second", path="/incoming/second")
+    first_started, next_started = asyncio.Event(), asyncio.Event()
+
+    async def handler(claim):
+        if claim.task_id == first_id:
+            first_started.set()
+            await asyncio.sleep(30)
+        else:
+            next_started.set()
+            raise ProviderError("test_next_task_reached")
+
+    worker = Worker(
+        queue,
+        store,
+        Runtime(data_dir=tmp_path, worker_concurrency=1, poll_seconds=0.05),
+        handlers={Stage.MATCH: handler},
+    )
+    await worker.start()
+    try:
+        await asyncio.wait_for(first_started.wait(), timeout=2)
+        with db.sessions.begin() as session:
+            task = session.get(Task, first_id)
+            item = session.get(Package, task.package_id)
+            # Another owner recovered this lease. The old slot must abandon its job.
+            item.lease_owner, item.lease_generation = "replacement", item.lease_generation + 1
+            item.lease_until = time.time() + 30
+            task.lease_owner, task.lease_generation = "replacement", item.lease_generation
+        await asyncio.wait_for(next_started.wait(), timeout=2)
+        assert not worker.slots[0].done()
+        with db.sessions.begin() as session:
+            assert session.get(Task, first_id).lease_owner == "replacement"
+            assert session.get(Task, second_id).attempts == 1
+    finally:
+        await worker.stop()
