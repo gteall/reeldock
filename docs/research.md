@@ -11,7 +11,7 @@
 - [电影详情](https://developer.themoviedb.org/reference/movie-details)、[剧级详情](https://developer.themoviedb.org/reference/tv-series-details)、[官方 OpenAPI](https://developer.themoviedb.org/openapi/tmdb-api.json)和[语言说明](https://developer.themoviedb.org/docs/languages)：实现区分详情的 original_language 与请求本地化语言参数。按用户最新规则，基础资产完成后以 original_language 分流，中文集合默认 zh / cn；这是项目业务策略，不是从原始语言推导制片国家或实际文件音轨。
 - [限流说明](https://developer.themoviedb.org/docs/rate-limiting)：处理 429，不把旧限流机制当作当前固定额度。
 
-本次未提供 TMDB 凭证，未完成带凭证的搜索、详情及图片下载测试；这些属于 P0 / P2 验证。
+本次未提供 TMDB 凭证，未完成带凭证的搜索、详情及图片下载测试；本次 P0 不调用 TMDB，带凭证闭环留在 P2。
 
 ## 射手字幕
 
@@ -36,7 +36,7 @@
 - [OpenList WebDAV 驱动与重定向](https://doc.oplist.org/guide/drivers/webdav)：实际内容可能经 302 返回下载地址，需设计重定向和 Range 检查。
 - [WebDAV RFC 4918](https://www.rfc-editor.org/rfc/rfc4918.html#section-9.9)：MOVE 使用 Destination，Overwrite: F 防止替换目标，目录操作可能出现 207 子项失败。规范不证明某个 OpenList 驱动实现了原子移动。
 
-尚无实际服务地址和测试路径，未执行用户 WebDAV 的读写、Range 或移动测试。
+P0 已使用用户提供的本地配置，在专用测试目录完成真实读写、Range 和 MOVE；发现 DAV / CDN ETag 差异及目标冲突返回 500，详见 [兼容性记录](compatibility.md)。实际地址 / 路径不写入仓库，精确 OpenList / 驱动版本仍待提供。
 
 ## Kodi 与其它播放端
 
@@ -46,7 +46,7 @@
 - [Kodi 本地头像与远程 thumb 的问题记录](https://github.com/xbmc/xbmc/issues/25662)：即使有本地图，远程 thumb 仍可能影响结果；因此方案不默认写入 TMDB 头像 URL，并要求断网 / 无缓存导入验收。
 - [飞牛影视媒体库设置](https://help.fnnas.com/articles/v1/media/media_install)：可优先读取本地 NFO 与图片，但不能由此推断它完全兼容 Kodi 的演员图片约定。
 
-用户已选择 Kodi 为首要目标，首版优先使用随媒体保存的 `.actors`。未提供 Kodi 版本，尚未进行实际导入验证；其它播放端另设兼容配置。
+用户已选择 Kodi 为首要目标，首版优先使用随媒体保存的 `.actors`。P0 已在本机 Kodi 21.3 / Estuary 完成基础 NFO、随片图片 / 演员 JPG 的导入及刷新；真正断网、无缓存的新样例导入尚未验证，其它播放端另设兼容配置。
 
 ## 运行环境
 

@@ -2,7 +2,7 @@
 
 面向 NAS 的影视刮削与归档工具：从 OpenList 提供的 WebDAV 待刮削目录发现影视文件，通过 TMDB 获取元数据，将 NFO、海报、背景图、演员头像和所需字幕写回 WebDAV，全部必需项验证通过后移动整个媒体目录。
 
-**当前状态：方案设计阶段。** 本仓库目前包含架构、开发计划、分阶段 vibe coding 提示词和验收标准，尚无可运行的应用或 Docker 镜像。已完成一次射手 API 公开样本的查询及下载验证；实际 NAS、OpenList 存储驱动和 Kodi 联调纳入 P0。
+**当前状态：P0 验证工具已实现，部分实机验收待补齐。** 已在本机连接真实 WebDAV 完成小文件读回、Range 指纹、目录 MOVE 与媒体样本探测，完成射手公开样本验证及 Kodi 基础 NFO / 本地图片导入和刷新。Kodi 真正断网、大型实际片源、NAS 故障注入及飞牛 Docker 未验证；尚无产品应用或 Docker 镜像。详见 [兼容性记录](docs/compatibility.md)。
 
 ## 产品约定
 
@@ -33,6 +33,9 @@
 
 ## 设计与开发
 
+- [P0 工具运行说明](docs/p0-tools.md)
+- [兼容性与实测边界](docs/compatibility.md)
+- [开发进度与交接](docs/progress.md)
 - [总体架构与业务规则](docs/architecture.md)
 - [分阶段开发计划](docs/roadmap.md)
 - [各阶段 vibe coding 提示词](docs/vibe-coding-prompts.md)
@@ -47,4 +50,4 @@
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-本仓库不包含 TMDB 素材、用户片源、字幕样本或任何访问凭证。
+本仓库不包含 TMDB 素材、用户片源、第三方下载字幕或任何访问凭证；P0 测试只使用代码生成的原创媒体与字幕。

@@ -11,6 +11,8 @@ config.local.*
 data/
 cache/
 logs/
+reports/
+fixtures/
 *.db
 *.db-*
 *.sqlite
