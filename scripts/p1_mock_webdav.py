@@ -17,7 +17,10 @@ def main():
         )
         print(server.url, flush=True)
         print("Generated in-memory fixture. No real NAS or media is connected.", flush=True)
-        threading.Event().wait()
+        try:
+            threading.Event().wait()
+        except KeyboardInterrupt:
+            return
 
 
 if __name__ == "__main__":

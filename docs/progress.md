@@ -19,7 +19,7 @@ P1 工程基础已实施：前后端、本地持久化配置 / 任务 / 事件�
 - 添加 GitHub Actions 离线回归工作流，完成 44 项本机自动化测试。兼容边界见 [compatibility.md](compatibility.md)。
 - 实施 P1 FastAPI / React 应用、uv / pnpm 锁文件、Alembic 首次迁移、加密配置、管理员登录与来源 / CSRF 校验。
 - 实施数据库任务领取、包租约 / 心跳及代次校验、幂等键、检查点、退避重试、暂停 / 继续与启动恢复；显式建立基础资产 → 字幕 → 最终清单 → 归档门禁。
-- 通过 P1 后端 61 项、前端 4 项、P0 回归 44 项测试；完成后端 wheel、前端静态资源和本机开发镜像构建，容器重启持久化烟测通过。
+- 通过 P1 后端 64 项、前端 4 项、P0 回归 44 项测试；完成后端 wheel、前端静态资源和本机开发镜像构建，容器重启持久化烟测通过。
 
 ## 阶段状态
 
@@ -68,7 +68,7 @@ P0 待验仍需补充精确 OpenList 版本 / 存储驱动；在有隔离条件�
 
 ## P1 实施记录：2026-10-08 至 2026-10-09
 
-分支：`codex/p1-foundation`。保留 P0 工具，新增 `backend/src/reeldock`、`backend/tests`、`frontend/src`、锁文件、`Dockerfile.dev` / `compose.dev.yaml` / `.devcontainer`、P1 CI，以及 [开发指南](development.md)。
+分支：`codex/p1-foundation`；审阅入口：[PR #1](https://github.com/gteall/reeldock/pull/1)。保留 P0 工具，新增 `backend/src/reeldock`、`backend/tests`、`frontend/src`、锁文件、`Dockerfile.dev` / `compose.dev.yaml` / `.devcontainer`、P1 CI，以及 [开发指南](development.md)。
 
 数据库首次迁移 `0001` 覆盖配置、管理员 / 会话 / 登录限流、包、媒体、资产、任务、步骤、事件和归档意图。数据库放本地磁盘，配置经 Fernet 加密，密码用 Argon2id 哈希；管理员通过本机 CLI 初始化。修改接口具有 Origin / CSRF 校验，日志与事件只保留安全代码。当前事件接口为持久化 REST 游标，SSE 入口语义已预留但传输尚未开启。
 
@@ -78,7 +78,7 @@ P0 待验仍需补充精确 OpenList 版本 / 存储驱动；在有隔离条件�
 | --- | --- |
 | `uv sync --frozen`、`uv build --wheel` | 后端锁定依赖与 wheel 构建通过，迁移脚本 / 模板包含在 wheel 内 |
 | `uv run ruff check backend scripts/p1_*.py`、`uv run ruff format --check backend scripts/p1_*.py` | 通过 |
-| `uv run pytest -q` | 61 项通过；配置加密 / 重启、无效路径、来源与 CSRF、幂等并发提交、竞争领取、租约过期和旧持有者拒绝、心跳、暂停、局部重试、阶段顺序及上下文失效；含真实子进程非正常退出恢复 |
+| `uv run pytest -q` | 64 项通过；配置加密 / 重启、无效路径、来源与 CSRF、幂等并发提交、竞争领取、租约过期和旧持有者拒绝、心跳、暂停、局部重试与耗尽、前驱检查点 / 阶段顺序、运行中配置变化及上下文失效；含真实子进程非正常退出恢复 |
 | `pnpm install --frozen-lockfile`、`pnpm format:check`、`pnpm test`、`pnpm build`（frontend） | 格式、4 项 API 传输测试、TypeScript 与 Vite 构建通过 |
 | `python3.12 -m unittest discover -v` | P0 的 44 项回归通过，保留 P0 的专用媒体能力测试与正式流程的区别 |
 | `uv run python scripts/p1_check_webdav.py --env-file .env.p0` | 新 HTTPX Provider 在真实 WebDAV 列出扫描目录 2 项、测试父目录 3 项；零视频内容读取、零写入、零 MOVE |
@@ -87,10 +87,13 @@ P0 待验仍需补充精确 OpenList 版本 / 存储驱动；在有隔离条件�
 | `docker compose -f compose.dev.yaml up -d --no-build` | 本机容器健康检查和静态前端通过，单 Uvicorn 进程，非 root 用户 |
 | `uv run python scripts/p1_container_smoke.py` | 独立随机容器 / 数据卷 9 项检查通过；真实重启保留配置、会话、暂停任务和事件；重复提交幂等；仅测试数据，无真实 WebDAV |
 | `git diff --check` | 通过；本地凭证、报告、数据库、样例和构建产物不提交 |
+| GitHub Actions | P0 回归与 P1 后端 / 前端 / 容器检查通过；最新提交结果见 PR 的 Checks，未发布镜像 |
 
 任务边界：`match_metadata → base_assets_verified → subtitle_policy → final_manifest → archive`。前驱检查点和当前版本远程资产证据都要通过，空集合不能满足基础门禁。失败只重试当前步骤，已完成基础步骤在字幕重试中保留；源快照 / TMDB / 语言 / 策略变化使旧证据失效。P1 没有生产 TMDB、媒体探测或射手 handler；archive 的 Worker 门禁和 WebDAV MOVE 都关闭，PUT 同样尚未开放。只有真实只读连接任务可以执行完成。
 
 剩余边界：真实代理、飞牛 Docker 与容器访问真实 NAS 未验证；VS Code 交互式 Reopen in Container 未实测。P0 的断网 Kodi、大媒体及 NAS 故障待验项保持不变。当前 Ant Design 主块约 1.05 MB / gzip 336 KB，构建体积提示留待后续 UI 拆分；Starlette 对测试客户端 HTTPX 的弃用提示不影响当前锁定依赖结果。没有发布版本或上传镜像。
+
+验证用本机 API、Mock 服务和开发 Compose 容器已停止，避免占用正式开发端口；普通 Compose 数据卷保留。临时 UI 仅使用独立生成式数据，用户 `.env.p0` 未复制进产品数据库或镜像。
 
 下一阶段从 P2 提示词开始，复用 Provider、资产版本与 Worker 检查点；不要启用任何提前探测路径。新配置页面可先保存 TMDB 凭证，P2 再进行真实接口验证。
 

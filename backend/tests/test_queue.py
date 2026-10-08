@@ -311,3 +311,60 @@ async def test_worker_heartbeats_and_graceful_restart(foundation, tmp_path):
     assert queue.claim("competitor") is None
     await worker.stop()
     assert queue.claim("restarted").task_id == task_id
+
+
+async def test_verified_assets_do_not_allow_skipping_predecessor_checkpoints(foundation, tmp_path):
+    db, store, queue = foundation
+    task_id, package_id = package(foundation)
+    assets_ready(db, package_id)
+    with db.sessions.begin() as session:
+        session.get(Task, task_id).stage = Stage.SUBTITLE
+    calls = []
+
+    async def forbidden(claim):
+        calls.append(claim.stage)
+
+    worker = Worker(queue, store, Runtime(data_dir=tmp_path), handlers={Stage.SUBTITLE: forbidden})
+    await worker.execute(queue.claim("owner"))
+    assert not calls
+    with db.sessions.begin() as session:
+        assert session.get(Task, task_id).error_code == "prior_step_not_completed"
+
+
+def test_automatic_retry_is_bounded_and_manual_retry_resets_current_step(foundation):
+    db, _, queue = foundation
+    task_id = queue.submit("connection_check", ":connection", "retry-budget", 1)
+    for attempt in range(3):
+        claim = queue.claim("worker")
+        queue.begin_step(claim)
+        queue.fail(claim, ProviderError("storage_timeout", retryable=True))
+        with db.sessions.begin() as session:
+            task = session.get(Task, task_id)
+            assert task.status == ("failed" if attempt == 2 else "retry_wait")
+            task.retry_at = 0
+    assert queue.claim("worker") is None
+    queue.control(task_id, "retry")
+    claim = queue.claim("worker")
+    queue.begin_step(claim)
+    queue.finish_step(claim, "connection_check", {"mode": "read_only"})
+    with db.sessions.begin() as session:
+        assert session.get(Task, task_id).status == "completed"
+
+
+async def test_configuration_change_in_flight_rejects_stale_completion(
+    foundation, tmp_path, config_body
+):
+    from reeldock.domain import ConfigUpdate
+
+    db, store, queue = foundation
+    task_id, _ = package(foundation)
+
+    async def changed(claim):
+        store.save(ConfigUpdate(**config_body, expected_revision=1))
+
+    worker = Worker(queue, store, Runtime(data_dir=tmp_path), handlers={Stage.MATCH: changed})
+    await worker.execute(queue.claim("owner"))
+    with db.sessions.begin() as session:
+        task = session.get(Task, task_id)
+        assert task.status == "blocked" and task.stage == Stage.MATCH
+        assert task.error_code == "configuration_changed_submit_new_task"

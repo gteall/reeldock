@@ -131,6 +131,10 @@ def configure_logging():
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
+        if name == "uvicorn.access":
+            logger.disabled = True
+        elif name in {"httpx", "httpcore"}:
+            logger.setLevel(logging.WARNING)
 
 
 def random_token() -> str:
