@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 import httpx
 from pydantic import SecretStr
 
-from reeldock.domain import Artwork, Movie, Person, ProviderError
+from reeldock.domain import Artwork, Episode, Movie, Person, ProviderError, Season, Series
 
 API = "https://api.themoviedb.org/3"
 IMAGE = "https://image.tmdb.org/t/p/"
@@ -132,12 +132,12 @@ class TMDBProvider:
         )
 
     async def search(self, query, kind="movie", year=None):
-        if kind != "movie":
-            raise ProviderError("media_type_not_supported_p2")
+        namespace = self.namespace(kind)
         params = {"query": query, "language": "zh-CN", "include_adult": "false", "page": 1}
         # Include all years so remakes and incorrect years remain visible as candidates.
-        body = await self.request("/search/movie", params)
-        return [self.movie(value) for value in body.get("results", [])]
+        body = await self.request("/search/" + namespace, params)
+        parse = self.series if namespace == "tv" else self.movie
+        return [parse(value) for value in body.get("results", [])]
 
     async def find_movie(self, imdb_id):
         if not re.fullmatch(r"tt\d{5,12}", imdb_id):
@@ -197,6 +197,8 @@ class TMDBProvider:
             "poster": ("w500", "poster_sizes"),
             "fanart": ("w1280", "backdrop_sizes"),
             "actor": ("w185", "profile_sizes"),
+            "season_poster": ("w500", "poster_sizes"),
+            "thumb": ("w300", "still_sizes"),
         }[kind]
         if size not in config.get(sizes, []):
             size = "original"
@@ -211,10 +213,9 @@ class TMDBProvider:
         )
 
     async def credits(self, external_id, kind="movie"):
-        if kind != "movie":
-            raise ProviderError("media_type_not_supported_p2")
         body = await self.request(
-            "/movie/" + self.external_id(external_id) + "/credits", {"language": "zh-CN"}
+            "/" + self.namespace(kind) + "/" + self.external_id(external_id) + "/credits",
+            {"language": "zh-CN"},
         )
         result = []
         for index, person in enumerate(body.get("cast", [])):
@@ -230,17 +231,27 @@ class TMDBProvider:
             )
         return result
 
-    async def images(self, external_id, kind="movie"):
-        if kind != "movie":
-            raise ProviderError("media_type_not_supported_p2")
-        body = await self.request("/movie/" + self.external_id(external_id) + "/images")
-        details = await self.request(
-            "/movie/" + self.external_id(external_id), {"language": "zh-CN"}
+    async def images(self, external_id, kind="movie", *, season=None, episode=None):
+        namespace = self.namespace(kind)
+        path = "/" + namespace + "/" + self.external_id(external_id)
+        keys = [("posters", "poster", "poster_path"), ("backdrops", "fanart", "backdrop_path")]
+        if season is not None:
+            self.numbers(season, episode)
+            path += f"/season/{season}"
+            keys = [("posters", "season_poster", "poster_path")]
+        if episode is not None:
+            path += f"/episode/{episode}"
+            keys = [("stills", "thumb", "still_path")]
+        body = await self.request(path + "/images")
+        details = await self.request(path, {"language": "zh-CN"})
+        original = (
+            (await self.series_details(external_id)).original_language
+            if namespace == "tv"
+            else details.get("original_language")
         )
-        original = details.get("original_language")
         priority = list(dict.fromkeys(["zh", None, original, "en"]))
         result = []
-        for key, asset_kind in [("posters", "poster"), ("backdrops", "fanart")]:
+        for key, asset_kind, fallback_key in keys:
             rows = sorted(
                 body.get(key, []),
                 key=lambda r: (
@@ -249,10 +260,8 @@ class TMDBProvider:
                     -(r.get("vote_count") or 0),
                 ),
             )
-            if not rows:
-                fallback = details.get("poster_path" if asset_kind == "poster" else "backdrop_path")
-                if fallback:
-                    rows = [{"file_path": fallback}]
+            if not rows and details.get(fallback_key):
+                rows = [{"file_path": details[fallback_key]}]
             for row in rows:
                 art = await self.artwork(row.get("file_path"), asset_kind, row.get("iso_639_1"))
                 if art:
@@ -287,11 +296,116 @@ class TMDBProvider:
         )
         return body
 
-    async def series_details(self, *args):
-        raise ProviderError("media_type_not_supported_p2")
+    @staticmethod
+    def namespace(kind):
+        if kind not in {"movie", "tv"}:
+            raise ProviderError("media_type_unknown")
+        return kind
 
-    async def season_details(self, *args):
-        raise ProviderError("media_type_not_supported_p2")
+    @staticmethod
+    def numbers(season, episode=None):
+        if (
+            type(season) is not int
+            or not 0 <= season <= 99
+            or (episode is not None and (type(episode) is not int or not 1 <= episode <= 999))
+        ):
+            raise ProviderError("episode_number_unknown")
 
-    async def episode_details(self, *args):
-        raise ProviderError("media_type_not_supported_p2")
+    @classmethod
+    def series(cls, value):
+        mapped = {
+            **value,
+            "title": value.get("name"),
+            "original_title": value.get("original_name"),
+            "release_date": value.get("first_air_date"),
+        }
+        return Series.model_validate(cls.movie(mapped).model_dump())
+
+    async def localized(self, path, fields, original=None):
+        primary = await self.request(path, {"language": "zh-CN"})
+        merged = dict(primary)
+        original = original if original is not None else primary.get("original_language")
+        for language in dict.fromkeys([original, "en-US"]):
+            if not language or language in {"zh", "zh-CN"} or all(merged.get(f) for f in fields):
+                continue
+            fallback = await self.request(path, {"language": language})
+            for field in fields:
+                if not merged.get(field) and fallback.get(field):
+                    merged[field] = fallback[field]
+        return merged, primary
+
+    async def series_details(self, external_id):
+        external_id = self.external_id(external_id)
+        value, primary = await self.localized("/tv/" + external_id, ("name", "overview", "genres"))
+        if str(primary.get("id")) != external_id or not value.get("name"):
+            raise ProviderError("tmdb_invalid_response")
+        series = self.series(value)
+        series.original_language = primary.get("original_language")
+        series.writers = [p["name"] for p in primary.get("created_by", []) if p.get("name")]
+        return series
+
+    def episode(self, value, series, season, episode):
+        if (
+            value.get("season_number") != season
+            or value.get("episode_number") != episode
+            or not value.get("id")
+            or not value.get("name")
+        ):
+            raise ProviderError("tmdb_episode_identity_conflict")
+        mapped = {
+            **value,
+            "title": value.get("name"),
+            "release_date": value.get("air_date"),
+            "original_language": series.original_language,
+        }
+        item = Episode(
+            **self.movie(mapped).model_dump(),
+            series_id=series.external_id,
+            season=season,
+            episode=episode,
+            still_path=value.get("still_path"),
+        )
+        item.directors = [
+            p["name"] for p in value.get("crew", []) if p.get("job") == "Director" and p.get("name")
+        ]
+        item.writers = list(
+            dict.fromkeys(
+                p["name"]
+                for p in value.get("crew", [])
+                if p.get("department") == "Writing" and p.get("name")
+            )
+        )
+        return item
+
+    async def season_details(self, external_id, season):
+        self.numbers(season)
+        series = await self.series_details(external_id)
+        value, primary = await self.localized(
+            f"/tv/{series.external_id}/season/{season}",
+            ("name", "overview"),
+            series.original_language,
+        )
+        if primary.get("season_number") != season:
+            raise ProviderError("tmdb_episode_identity_conflict")
+        episodes = [
+            self.episode(e, series, season, e.get("episode_number"))
+            for e in value.get("episodes", [])
+        ]
+        return Season(
+            series_id=series.external_id,
+            season=season,
+            title=value.get("name") or f"Season {season}",
+            overview=value.get("overview") or "",
+            poster_path=primary.get("poster_path"),
+            episodes=episodes,
+        )
+
+    async def episode_details(self, external_id, season, episode):
+        self.numbers(season, episode)
+        series = await self.series_details(external_id)
+        value, _ = await self.localized(
+            f"/tv/{series.external_id}/season/{season}/episode/{episode}",
+            ("name", "overview"),
+            series.original_language,
+        )
+        return self.episode(value, series, season, episode)

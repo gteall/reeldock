@@ -19,11 +19,19 @@ from reeldock.exporter import (
     validate_image,
 )
 from reeldock.matching import automatic_candidate, explicit_ids, parse_name, rank_candidates
-from reeldock.models import Asset, MovieRecord, Package
+from reeldock.models import Asset, Media, MovieRecord, Package, TaskStep
 from reeldock.providers.tmdb import TMDBProvider
 from reeldock.providers.webdav import WebDAVProvider
 from reeldock.queue import emit, invalidate_package, revise_package
-from reeldock.scanner import Scanner, media_entries, package_reason, source_snapshot
+from reeldock.scanner import (
+    Scanner,
+    collect,
+    flatten,
+    media_entries,
+    package_reason,
+    source_snapshot,
+)
+from reeldock.series import asset_descriptions, match_series
 
 
 def art_data(art):
@@ -63,7 +71,10 @@ class MoviePipeline:
         with self.db.sessions.begin() as session:
             package = session.get(Package, claim.package_id)
             record = session.get(MovieRecord, claim.package_id)
-            if not record or record.scan_status != "stable":
+            if not record or (
+                record.scan_status != "stable"
+                and not (claim.kind == "asset_retry" and record.scan_status == "archived")
+            ):
                 raise ProviderError("package_not_stable")
             return package, record
 
@@ -77,11 +88,31 @@ class MoviePipeline:
     async def source(self, claim, storage, config):
         self.check(claim)
         package, record = self.record(claim)
-        entries = await storage.list(package.remote_path)
+        entries = (
+            flatten(
+                await collect(storage, package.remote_path, lambda: self.check(claim)),
+                package.remote_path,
+            )
+            if package.kind == "tv"
+            else await storage.list(package.remote_path)
+        )
+        with self.db.sessions.begin() as session:
+            mappings = {
+                m.remote_path: (m.season, m.episode, m.manual_mapping)
+                for m in session.scalars(select(Media).where(Media.package_id == package.id))
+            }
         snapshot = source_snapshot(entries)
         snapshot["config_revision"] = claim.config_revision
+        # Protected pre-P4 MOVE intents keep their historical snapshot format.
+        if "kind" in package.source_snapshot:
+            snapshot["kind"] = package.kind
         reason = package_reason(
-            package.remote_path, config.input_path, entries, media_entries(entries)
+            package.remote_path,
+            config.input_path,
+            entries,
+            media_entries(entries),
+            package.kind,
+            mappings,
         )
         if snapshot != package.source_snapshot or reason:
             with self.db.sessions.begin() as session:
@@ -96,6 +127,9 @@ class MoviePipeline:
         return entries
 
     async def match(self, claim):
+        package, _ = self.record(claim)
+        if package.kind == "tv":
+            return await match_series(self, claim)
         config = self.configuration(claim)
         package, record = self.record(claim)
         async with (
@@ -171,26 +205,7 @@ class MoviePipeline:
             if movie.external_id != chosen:
                 raise ProviderError("tmdb_id_conflict")
             people = await metadata.credits(chosen, "movie")
-            names = {}
-            cast = []
-            for index, person in enumerate(people):
-                selected = config.actor_limit == 0 or index < config.actor_limit
-                filename = actor_filename(person.name) if selected else None
-                if selected:
-                    key = filename.casefold()
-                    if key in names and names[key] != person.external_id:
-                        raise ProviderError("actor_filename_collision")
-                    names[key] = person.external_id
-                item = person.model_dump(exclude={"profile"})
-                item["profile"] = art_data(person.profile)
-                item["path"] = ".actors/" + filename if filename else None
-                item["selected"] = selected
-                item["status"] = (
-                    ("pending" if person.profile else "source_no_image")
-                    if selected
-                    else "not_selected"
-                )
-                cast.append(item)
+            cast = self.cast(people, config)
             artwork = await metadata.images(chosen, "movie")
             await self.source(claim, storage, config)
             metadata_changed = False
@@ -234,6 +249,28 @@ class MoviePipeline:
                 "actors": len(cast),
             }
 
+    @staticmethod
+    def cast(people, config):
+        names = {}
+        cast = []
+        for index, person in enumerate(people):
+            selected = config.actor_limit == 0 or index < config.actor_limit
+            filename = actor_filename(person.name) if selected else None
+            if selected:
+                key = filename.casefold()
+                if key in names and names[key] != person.external_id:
+                    raise ProviderError("actor_filename_collision")
+                names[key] = person.external_id
+            item = person.model_dump(exclude={"profile"})
+            item["profile"] = art_data(person.profile)
+            item["path"] = ".actors/" + filename if filename else None
+            item["selected"] = selected
+            item["status"] = (
+                ("pending" if person.profile else "source_no_image") if selected else "not_selected"
+            )
+            cast.append(item)
+        return cast
+
     def _remember_existing(self, claim, name, body):
         with self.db.sessions.begin() as session:
             task, package = self.queue._owned(session, claim)
@@ -251,21 +288,27 @@ class MoviePipeline:
                 package.base_status = "pending"
 
     def freeze(self, claim, record, config, entries):
-        movie = Movie.model_validate(record.details)
-        existing_nfo = next(
-            (
-                PurePosixPath(e.path).name
-                for e in entries
-                if not e.is_dir and e.path.lower().endswith(".nfo")
-            ),
-            None,
-        )
-        nfo_name = existing_nfo or PurePosixPath(record.media_path).with_suffix(".nfo").name
-        plan = [
-            (nfo_name, "nfo", True),
-            ("poster.jpg", "poster", True),
-            ("fanart.jpg", "fanart", True),
-        ]
+        with self.db.sessions.begin() as session:
+            kind = session.get(Package, claim.package_id).kind
+        sources = {}
+        if kind == "tv":
+            movie, plan, sources = asset_descriptions(self, claim, record)
+        else:
+            movie = Movie.model_validate(record.details)
+            existing_nfo = next(
+                (
+                    PurePosixPath(e.path).name
+                    for e in entries
+                    if not e.is_dir and e.path.lower().endswith(".nfo")
+                ),
+                None,
+            )
+            nfo_name = existing_nfo or PurePosixPath(record.media_path).with_suffix(".nfo").name
+            plan = [
+                (nfo_name, "nfo", True),
+                ("poster.jpg", "poster", True),
+                ("fanart.jpg", "fanart", True),
+            ]
         plan += [
             (p["path"], "actor", bool(p["profile"]) or config.actor_policy == "strict")
             for p in record.cast
@@ -297,14 +340,33 @@ class MoviePipeline:
                     asset = Asset(package_id=package.id, relative_path=path, kind=kind)
                     session.add(asset)
                 asset.required = needed
-                if not needed:
+                asset.media_id = sources.get(path, {}).get("media_id")
+                asset.season = sources.get(path, {}).get("season")
+                if not needed and kind == "actor":
                     asset.status = "source_no_image"
             emit(session, "base_asset_plan_frozen", claim.task_id, required=len(required))
         if plan_changed:
             raise ProviderError("asset_plan_changed_submit_new_task")
-        return movie, plan
+        return movie, plan, sources
 
-    async def base(self, claim):
+    async def retry_asset(self, claim):
+        with self.db.sessions.begin() as session:
+            step = session.scalar(
+                select(TaskStep).where(
+                    TaskStep.task_id == claim.task_id, TaskStep.stage == "asset_retry"
+                )
+            )
+            asset = session.get(Asset, step.checkpoint.get("asset_id"))
+            if (
+                not asset
+                or asset.package_id != claim.package_id
+                or asset.kind not in {"nfo", "poster", "fanart", "actor", "season_poster", "thumb"}
+            ):
+                raise ProviderError("asset_retry_not_allowed")
+            path = asset.relative_path
+        return {"asset_id": asset.id, **await self.base(claim, only_path=path)}
+
+    async def base(self, claim, *, only_path=None):
         config = self.configuration(claim)
         package, record = self.record(claim)
         if not record.details or record.match_status != "matched":
@@ -314,12 +376,32 @@ class MoviePipeline:
             self.metadata_factory(config, self.cache) as metadata,
         ):
             entries = await self.source(claim, storage, config)
-            movie, plan = self.freeze(claim, record, config, entries)
+            if only_path is None:
+                movie, plan, sources = self.freeze(claim, record, config, entries)
+            else:
+                sources = {}
+                if package.kind == "tv":
+                    movie, _, sources = asset_descriptions(self, claim, record)
+                else:
+                    movie = Movie.model_validate(record.details)
+                with self.db.sessions.begin() as session:
+                    asset = session.scalar(
+                        select(Asset).where(
+                            Asset.package_id == package.id, Asset.relative_path == only_path
+                        )
+                    )
+                    plan = [(asset.relative_path, asset.kind, asset.required)]
             people = [Person.model_validate(p) for p in record.cast]
 
             async def produce(path, kind):
+                source = sources.get(path, {})
                 if kind == "nfo":
-                    return export_nfo(movie, people)
+                    return export_nfo(
+                        source.get("model", movie),
+                        people,
+                        tag=source.get("tag", "movie"),
+                        showtitle=movie.title,
+                    )
                 if kind == "actor":
                     person = next(p for p in record.cast if p["path"] == path)
                     if not person["profile"]:
@@ -329,8 +411,17 @@ class MoviePipeline:
                         convert=True,
                     )
                 alternatives = [
-                    Artwork.model_validate(a) for a in record.artwork if a["kind"] == kind
+                    Artwork.model_validate(a)
+                    for a in source.get("artwork", record.artwork)
+                    if a["kind"] == kind
                 ]
+                if not alternatives and kind in {"season_poster", "thumb"}:
+                    alternatives = await metadata.images(
+                        movie.external_id,
+                        "tv",
+                        season=source["season"],
+                        episode=getattr(source.get("model"), "episode", None),
+                    )
                 if not alternatives:
                     raise ProviderError("tmdb_" + kind + "_missing")
                 last = None
@@ -344,8 +435,10 @@ class MoviePipeline:
             # Finish independent assets even if one fails; retries reuse the completed set.
             failures = []
             for path, kind, required in plan:
-                if not required:
+                if not required and kind == "actor" and only_path is None:
                     continue
+                source = sources.get(path, {})
+                model = source.get("model", movie)
                 try:
                     await self.upload(
                         claim,
@@ -354,8 +447,11 @@ class MoviePipeline:
                         path,
                         kind,
                         lambda p=path, k=kind: produce(p, k),
-                        movie.external_id,
-                        movie.imdb_id,
+                        model.external_id,
+                        model.imdb_id,
+                        nfo_tag=source.get("tag", "movie"),
+                        season=getattr(model, "season", None),
+                        episode=getattr(model, "episode", None),
                     )
                 except ProviderError as error:
                     if error.code in {
@@ -372,13 +468,18 @@ class MoviePipeline:
                                 Asset.package_id == package.id, Asset.relative_path == path
                             )
                         )
-                        asset.status, asset.error_code = "failed", error.code
-                    failures.append(error)
+                        missing = not required and error.code == "tmdb_" + kind + "_missing"
+                        asset.status, asset.error_code = (
+                            ("source_no_image", None) if missing else ("failed", error.code)
+                        )
+                    if required or only_path is not None:
+                        failures.append(error)
             await self.source(claim, storage, config)
             if failures:
                 with self.db.sessions.begin() as session:
                     self.queue._owned(session, claim)
-                    session.get(Package, package.id).base_status = "failed"
+                    if only_path is None or plan[0][2]:
+                        session.get(Package, package.id).base_status = "failed"
                 raise failures[0]
             return {
                 "required": len([p for p in plan if p[2]]),
@@ -389,7 +490,19 @@ class MoviePipeline:
             }
 
     async def upload(
-        self, claim, storage, package_path, path, kind, produce, tmdb_id, imdb_id=None
+        self,
+        claim,
+        storage,
+        package_path,
+        path,
+        kind,
+        produce,
+        tmdb_id,
+        imdb_id=None,
+        *,
+        nfo_tag="movie",
+        season=None,
+        episode=None,
     ):
         self.check(claim)
         with self.db.sessions.begin() as session:
@@ -425,13 +538,17 @@ class MoviePipeline:
             if managed and expected and sha256(body) != expected:
                 # A previously interrupted PUT must not adopt different bytes as success.
                 raise ProviderError("upload_verification_failed")
-            self.validate(body, kind, tmdb_id, imdb_id)
+            self.validate(
+                body, kind, tmdb_id, imdb_id, nfo_tag=nfo_tag, season=season, episode=episode
+            )
             existing = True
         else:
             body = self.cache.get(key) if source_tmdb_id in {None, tmdb_id} else None
             if body is None:
                 body = await produce()
-            self.validate(body, kind, tmdb_id, imdb_id)
+            self.validate(
+                body, kind, tmdb_id, imdb_id, nfo_tag=nfo_tag, season=season, episode=episode
+            )
             existing = False
             key = self.cache.put(body)
             with self.db.sessions.begin() as session:
@@ -500,12 +617,17 @@ class MoviePipeline:
             )
 
     @staticmethod
-    def validate(body, kind, tmdb_id, imdb_id=None):
+    def validate(body, kind, tmdb_id, imdb_id=None, *, nfo_tag="movie", season=None, episode=None):
         if kind == "nfo":
-            read_nfo(body)
-            identifiers = nfo_ids(body)
+            root = read_nfo(body, nfo_tag)
+            if nfo_tag == "episodedetails" and (
+                root.findtext("season"),
+                root.findtext("episode"),
+            ) != (str(season), str(episode)):
+                raise ProviderError("tmdb_episode_identity_conflict")
+            identifiers = nfo_ids(body, nfo_tag)
             valid = identifiers == {tmdb_id} or (
-                not identifiers and imdb_id and imdb_ids(body) == {imdb_id}
+                not identifiers and imdb_id and imdb_ids(body, nfo_tag) == {imdb_id}
             )
             if not valid:
                 raise ProviderError("tmdb_id_conflict")

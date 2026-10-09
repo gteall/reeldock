@@ -33,8 +33,8 @@ const messages: Record<string, string> = {
 
   tmdb_credentials_required: '请先保存 TMDB 凭证',
   tmdb_timeout: 'TMDB 连接超时，请检查网络或代理',
-  tmdb_not_found: 'TMDB 电影 ID 不存在，请核对电影与剧集类型',
-  tmdb_match_needs_review: '匹配存在歧义，请选择候选或指定电影 ID',
+  tmdb_not_found: 'TMDB ID 不存在，请核对电影与剧集类型',
+  tmdb_match_needs_review: '匹配存在歧义，请选择候选或指定电影 / 剧 ID',
   tmdb_id_conflict: '文件名、现存 NFO 与指定 ID 冲突，已保留原件',
   existing_nfo_id_missing: '已有 NFO 缺少明确 TMDB ID，已保留原件，请人工核对',
   invalid_nfo: '已有 NFO 无法安全解析，已保留原件',
@@ -46,7 +46,13 @@ const messages: Record<string, string> = {
   source_changed_scan_again: '源文件发生变化，请重新扫描并等待稳定',
   loose_media_requires_directory: '散放视频需要整理为独立目录',
   multiple_media_requires_review: '同一目录包含多个视频，需要人工整理',
-  tv_not_supported_p2: '电视剧将在 P4 支持',
+  episode_number_unknown: '季集号不明确，请人工修正后重新扫描',
+  episode_number_conflict: '文件与目录的季集编号冲突，请人工修正',
+  multi_episode_file_unsupported: '多集单文件尚未支持，请拆分或人工整理；不能映射为单集',
+  duplicate_episode_mapping: '同一包中多个文件映射到同一集，请核对',
+  tmdb_episode_identity_conflict: 'TMDB 集身份与季集编号不一致，已保留原件',
+  episode_not_found: '剧集文件不存在',
+  asset_retry_not_allowed: '此资产不能单独重试，请恢复原字幕或归档任务',
   nested_package_requires_review: '目录层级不明确，需要人工整理',
   package_busy_pause_first: '包正在处理中，请暂停并等待任务释放租约',
   existing_asset_identity_conflict: '现存影坞资产属于另一个 TMDB ID，已保留，请人工核对',
@@ -164,6 +170,8 @@ export interface TaskEvent {
 }
 
 export interface Asset {
+  media_id: string | null
+  season: number | null
   id: string
   path: string
   kind: string
@@ -174,7 +182,29 @@ export interface Asset {
   sha256: string | null
   preview: string | null
 }
+export interface MediaItem {
+  id: string
+  path: string
+  title: string
+  season: number | null
+  episode: number | null
+  tmdb_id: string | null
+  mapping_status: string
+  manual_mapping: boolean
+  original_language: string | null
+  subtitle_status: string
+  subtitle_reason: string | null
+  subtitle_evidence: Record<string, unknown>
+  probe_status: string
+  probe_evidence: Film['probe_evidence']
+  error_code: string | null
+}
 export interface Film {
+  kind: 'movie' | 'tv'
+  context_version: number
+  lease_active: boolean
+  media: MediaItem[]
+  seasons: { number: number; title: string }[]
   subtitle_status: string
   subtitle_reason: string | null
   subtitle_evidence: Record<string, unknown>

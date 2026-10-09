@@ -128,5 +128,5 @@ def test_upgrade_existing_p1_configuration_and_tasks(tmp_path, config_body):
     assert revision == 1 and config.stable_seconds == 600 and config.actor_limit == 20
     with db.sessions.begin() as session:
         assert session.get(Task, task_id).status == "queued"
-        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
+        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004"
     db.close()

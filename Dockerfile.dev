@@ -1,4 +1,4 @@
-# P3 development/verification image; no release image or registry publication.
+# P4 development/verification image; no release image or registry publication.
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 FROM ${NODE_IMAGE} AS frontend

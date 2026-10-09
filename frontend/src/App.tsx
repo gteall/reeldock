@@ -32,9 +32,12 @@ import {
 import { api, ApiError, explain, setCsrf } from './api'
 import type { Config, Session, Task, TaskEvent } from './api'
 import { MoviesPage } from './MoviesPage'
+import { connectEvents } from './liveEvents'
+import type { LiveState } from './liveEvents'
 
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
+  asset_retry: '资产局部重试',
   connection_check: '只读连接检查',
   scan: '目录扫描',
   match_metadata: 'TMDB 匹配',
@@ -131,7 +134,7 @@ function LoginPage({ onLogin }: { onLogin: (value: Session) => void }) {
             进入控制台
           </Button>
         </Form>
-        <Text type="secondary">电影刮削与安全归档 · P3</Text>
+        <Text type="secondary">电影与剧集刮削 · P4</Text>
       </Card>
     </div>
   )
@@ -436,7 +439,7 @@ function TasksPage() {
   const query = useQuery({
     queryKey: ['tasks'],
     queryFn: () => api<{ items: Task[] }>('/tasks'),
-    refetchInterval: 2000,
+    refetchInterval: 30000,
   })
   const control = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) =>
@@ -557,7 +560,11 @@ function TasksPage() {
                   label: 'TMDB 原始语言',
                   children: task.original_language ?? '尚未匹配',
                 },
-                { key: 'probe', label: '实际音轨 / 字幕', children: '请在电影详情查看字幕证据' },
+                {
+                  key: 'probe',
+                  label: '实际音轨 / 字幕',
+                  children: '请在媒体包 / 单集详情查看字幕证据',
+                },
                 { key: 'reason', label: '错误原因', children: explain(task.error_code) },
               ]}
             />
@@ -595,7 +602,7 @@ function EventsPage() {
       cursor.current = result.next_cursor
       return result
     },
-    refetchInterval: 2000,
+    refetchInterval: 30000,
   })
   useEffect(() => {
     if (query.data?.items.length)
@@ -605,9 +612,10 @@ function EventsPage() {
       })
   }, [query.data])
   return (
-    <Card title="持久化事件" extra={<Tag>按游标恢复 · REST</Tag>}>
+    <Card title="持久化事件" extra={<Tag>按游标恢复 · SSE + REST</Tag>}>
       <Paragraph type="secondary">
-        显示最近读取的 200 条事件。连接中断后沿数据库游标继续读取，SSE 传输将在后续阶段接入。
+        显示最近读取的 200 条事件。连接中断后沿数据库游标继续读取，SSE
+        实时通知变化；断线重连后重新获取数据库状态，REST 游标保留为回源入口。
       </Paragraph>
       {query.isError && <Alert type="error" title={failure(query.error)} />}
       <Table<TaskEvent>
@@ -643,6 +651,7 @@ export default function App() {
   const queryClient = useQueryClient()
   const { message } = AntApp.useApp()
   const [page, setPage] = useState('settings')
+  const [liveState, setLiveState] = useState<LiveState>('offline')
   const session = useQuery({
     queryKey: ['session'],
     queryFn: async () => {
@@ -666,6 +675,17 @@ export default function App() {
       }),
     [queryClient],
   )
+  useEffect(() => {
+    if (!session.data) return
+    return connectEvents(
+      () => {
+        for (const key of ['movies', 'tasks', 'events'])
+          queryClient.invalidateQueries({ queryKey: [key] })
+      },
+      setLiveState,
+      () => queryClient.invalidateQueries({ queryKey: ['session'] }),
+    )
+  }, [session.data?.username, queryClient])
   const logout = async () => {
     try {
       await api('/auth/logout', { method: 'POST' })
@@ -702,15 +722,22 @@ export default function App() {
           selectedKeys={[page]}
           onClick={({ key }) => setPage(key)}
           items={[
-            { key: 'movies', icon: <PlayCircleOutlined />, label: '电影与资产' },
+            { key: 'movies', icon: <PlayCircleOutlined />, label: '电影与剧集' },
             { key: 'settings', icon: <SettingOutlined />, label: '连接与配置' },
             { key: 'tasks', icon: <ApartmentOutlined />, label: '任务中心' },
             { key: 'events', icon: <ReloadOutlined />, label: '运行事件' },
           ]}
         />
         <div className="sidebar-bottom">
-          <Tag color="cyan">P3 · 字幕与安全归档</Tag>
-          <p>归档需验证 MOVE 能力</p>
+          <Tag color="cyan">P4 · 电影与剧集</Tag>
+          <p>
+            归档需验证 MOVE 能力 ·{' '}
+            {
+              { live: '实时连接', connecting: '连接中', reconnecting: '重连中', offline: '离线' }[
+                liveState
+              ]
+            }
+          </p>
         </div>
       </aside>
       <div className="main">
@@ -738,7 +765,7 @@ export default function App() {
               <span className="eyebrow">REELDOCK / {page.toUpperCase()}</span>
               <Title level={2}>
                 {page === 'movies'
-                  ? '电影与资产'
+                  ? '电影与剧集'
                   : page === 'settings'
                     ? '连接与配置'
                     : page === 'tasks'

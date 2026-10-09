@@ -68,12 +68,13 @@ async def shooter(args):
         raise ProviderError(errors[-1])
 
 
-async def webdav(args):
+async def webdav(args, *, tv=False):
     values = dotenv_values(args.webdav_env, interpolate=False)
     if not values.get("P0_WEBDAV_URL") or not values.get("P0_TEST_ROOT"):
         return {"status": "unverified", "code": "missing_webdav_test_configuration"}
     # Explicitly no scan/input movie path from .env.p0 is used in this mode.
-    test_id = ".reeldock-p3-" + uuid.uuid4().hex
+    phase = "p4" if tv else "p3"
+    test_id = ".reeldock-" + phase + "-" + uuid.uuid4().hex
     parent = values["P0_TEST_ROOT"].rstrip("/")
     root = parent + "/" + test_id
     config = AppConfig(
@@ -92,7 +93,7 @@ async def webdav(args):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend" / "tests"))
     from p2_support import FakeTMDB
 
-    retained = Path("reports/p3-runs") / test_id
+    retained = Path("reports/" + phase + "-runs") / test_id
     retained.mkdir(parents=True, mode=0o700)
     with nullcontext(retained) as folder:
         db = Database(folder / "test.sqlite3")
@@ -101,28 +102,56 @@ async def webdav(args):
             store = SettingsStore(db, Vault(folder))
             store.save(ConfigUpdate(**config.model_dump()))
             queue = Queue(db)
-            metadata = FakeTMDB()
+            if tv:
+                from p4_support import TVMetadata
+
+                metadata = TVMetadata("zh")
+            else:
+                metadata = FakeTMDB()
             metadata.movies[0].original_language = "zh"
-            worker = Worker(queue, store, Runtime(data_dir=folder), metadata_factory=metadata)
+
+            class GuardedDAV(WebDAVProvider):
+                async def read_range(self, *args):
+                    raise ProviderError("chinese_video_read_forbidden")
+
+                async def read_small(self, path, max_bytes):
+                    if Path(path).suffix.lower() in {".mkv", ".mp4"}:
+                        raise ProviderError("chinese_video_read_forbidden")
+                    return await super().read_small(path, max_bytes)
+
+            worker = Worker(
+                queue,
+                store,
+                Runtime(data_dir=folder),
+                metadata_factory=metadata,
+                storage_factory=GuardedDAV,
+            )
             package_path = config.input_path + "/Example (2020)"
             async with WebDAVProvider(config) as dav:
                 if not (await dav.stat(parent)).is_dir:
                     raise ProviderError("test_parent_not_directory")
                 for path in [root, config.input_path, config.output_path, package_path]:
                     await dav.mkdir(path)
-                # This isolated tool alone seeds synthetic video-shaped bytes. The
-                # production small-asset PUT method continues to reject video writes.
-                async with dav.response(
-                    "PUT",
-                    package_path + "/Example.2020.1080p.mkv",
-                    headers={"If-None-Match": "*"},
-                    content=b"ReelDock generated P3 fixture\n" * 4096,
-                ) as response:
-                    if response.status_code not in {200, 201, 204}:
-                        raise ProviderError("fixture_upload_failed")
+                # Only this dedicated tool seeds tiny synthetic media-shaped bytes.
+                names = (
+                    ["Season 01/Example.S01E01.mkv", "Season 01/Example.S01E02.mkv"]
+                    if tv
+                    else ["Example.2020.1080p.mkv"]
+                )
+                if tv:
+                    await dav.mkdir(package_path + "/Season 01")
+                for name in names:
+                    async with dav.response(
+                        "PUT",
+                        package_path + "/" + name,
+                        headers={"If-None-Match": "*"},
+                        content=b"ReelDock generated fixture\n" * 4096,
+                    ) as response:
+                        if response.status_code not in {200, 201, 204}:
+                            raise ProviderError("fixture_upload_failed")
                 await worker.movies.scanner.scan(dav, config, 1, now=time.time() - 2)
                 await worker.movies.scanner.scan(dav, config, 1)
-            task_id = queue.submit("package_pipeline", package_path, "real-p3-test", 1)
+            task_id = queue.submit("package_pipeline", package_path, "real-" + phase + "-test", 1)
             await worker.execute(queue.claim("p3-test"))
             with db.sessions.begin() as session:
                 task = session.get(Task, task_id)
@@ -130,7 +159,9 @@ async def webdav(args):
                 intent = session.scalar(select(ArchiveIntent))
                 result = {
                     "status": "passed" if task.status == "completed" else "failed",
-                    "scope": "dedicated_synthetic_package_mock_tmdb_real_webdav",
+                    "scope": "dedicated_synthetic_"
+                    + ("series" if tv else "movie")
+                    + "_mock_tmdb_real_webdav",
                     "test_id": test_id,
                     "subtitle_status": package.subtitle_status,
                     "archive_status": package.archive_status,
@@ -140,7 +171,7 @@ async def webdav(args):
                     "real_media_probe": "unverified",
                     "real_driver_version": "unverified",
                     "cleanup": "retained_no_delete",
-                    "local_journal": "reports/p3-runs/" + test_id,
+                    "local_journal": "reports/" + phase + "-runs/" + test_id,
                 }
             return result
         finally:

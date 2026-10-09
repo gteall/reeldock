@@ -1,6 +1,15 @@
 from typing import Protocol
 
-from reeldock.domain import Artwork, Episode, Movie, Person, RemoteEntry, Series, SubtitleCandidate
+from reeldock.domain import (
+    Artwork,
+    Episode,
+    Movie,
+    Person,
+    RemoteEntry,
+    Season,
+    Series,
+    SubtitleCandidate,
+)
 
 
 class StorageProvider(Protocol):
@@ -19,7 +28,7 @@ class MetadataProvider(Protocol):
     async def find_movie(self, imdb_id: str) -> Movie: ...
     async def movie_details(self, external_id: str) -> Movie: ...
     async def series_details(self, external_id: str) -> Series: ...
-    async def season_details(self, external_id: str, season: int) -> list[Episode]: ...
+    async def season_details(self, external_id: str, season: int) -> Season: ...
     async def episode_details(self, external_id: str, season: int, episode: int) -> Episode: ...
     async def credits(self, external_id: str, kind: str) -> list[Person]: ...
     async def images(self, external_id: str, kind: str) -> list[Artwork]: ...
@@ -28,6 +37,6 @@ class MetadataProvider(Protocol):
 
 class SubtitleProvider(Protocol):
     async def search(
-        self, fingerprint: str, episode_context: str | None
+        self, fingerprint: str, episode_context: dict | None
     ) -> list[SubtitleCandidate]: ...
     async def download(self, candidate: SubtitleCandidate) -> bytes: ...

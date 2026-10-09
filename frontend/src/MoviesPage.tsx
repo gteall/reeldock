@@ -14,6 +14,9 @@ import {
   InputNumber,
   Modal,
   Space,
+  Select,
+  Segmented,
+  Tree,
   Spin,
   Table,
   Tag,
@@ -22,9 +25,16 @@ import {
 import { FileSearchOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, explain } from './api'
 import type { Asset, Film } from './api'
+import { EpisodesPanel, ProbeEvidence } from './EpisodesPanel'
+import { directoryTree, visiblePackages } from './library'
 
 const names: Record<string, string> = {
   not_selected: '未纳入本次要求',
+  not_needed: '不需要',
+  mapped: '编号已确认',
+  not_applicable: '不适用',
+  all_media_verified: '全部媒体字幕策略通过',
+  superseded: '已归入剧包',
   stable: '已稳定',
   waiting_stable: '等待稳定',
   needs_review: '待确认',
@@ -74,7 +84,21 @@ function assetState(film: Film, kind: string) {
         {rows.filter((a) => a.status === 'remote_verified').length} / {rows.length}
       </span>
     )
-  return <Status value={rows[0].status} />
+  const state = rows.every((a) => a.status === 'remote_verified')
+    ? 'remote_verified'
+    : rows.some((a) => a.status === 'failed')
+      ? 'failed'
+      : rows.find((a) => a.status !== 'remote_verified')!.status
+  return (
+    <Space>
+      <Status value={state} />
+      {rows.length > 1 && (
+        <small>
+          {rows.filter((a) => a.status === 'remote_verified').length}/{rows.length}
+        </small>
+      )}
+    </Space>
+  )
 }
 
 function Preview({ asset, close }: { asset: Asset | null; close: () => void }) {
@@ -112,10 +136,17 @@ export function MoviesPage() {
   const [selected, setSelected] = useState<string | null>(null)
   const [preview, setPreview] = useState<Asset | null>(null)
   const [filter, setFilter] = useState('')
+  const [kind, setKind] = useState('all')
+  const [state, setState] = useState('all')
+  const [directory, setDirectory] = useState('')
+  const [checked, setChecked] = useState<string[]>([])
+  const [batchResults, setBatchResults] = useState<
+    { id: string; accepted: boolean; error_code?: string }[]
+  >([])
   const films = useQuery({
     queryKey: ['movies'],
-    queryFn: () => api<{ items: Film[] }>('/movies'),
-    refetchInterval: 2000,
+    queryFn: () => api<{ items: Film[] }>('/packages'),
+    refetchInterval: 30000,
   })
   const film = films.data?.items.find((f) => f.id === selected)
   const refresh = () => {
@@ -167,118 +198,251 @@ export function MoviesPage() {
     onError: error,
   })
   const busy = (f: Film) =>
-    !!f.archive_intent || ['running', 'queued', 'retry_wait'].includes(f.task_status ?? '')
+    f.lease_active ||
+    !!f.archive_intent ||
+    ['running', 'queued', 'retry_wait'].includes(f.task_status ?? '')
+  const retryAsset = useMutation({
+    mutationFn: (a: Asset) =>
+      api(`/assets/${a.id}/retry`, {
+        method: 'POST',
+        body: JSON.stringify({ idempotency_key: crypto.randomUUID() }),
+      }),
+    onSuccess: () => {
+      refresh()
+      message.success('资产局部重试已排队')
+    },
+    onError: error,
+  })
+  const batch = useMutation({
+    mutationFn: async (action: string) => {
+      const items = (films.data?.items ?? []).filter((f) => checked.includes(f.id))
+      if (action === 'start')
+        return api<{ items: typeof batchResults }>('/batch/tasks', {
+          method: 'POST',
+          body: JSON.stringify({ package_ids: checked, idempotency_key: crypto.randomUUID() }),
+        })
+      const missing = items
+        .filter((f) => !f.task_id)
+        .map((f) => ({ id: f.id, accepted: false, error_code: 'task_not_found' }))
+      const ids = items.flatMap((f) => (f.task_id ? [f.task_id] : []))
+      const result = ids.length
+        ? await api<{ items: typeof batchResults }>('/batch/control', {
+            method: 'POST',
+            body: JSON.stringify({ task_ids: ids, action }),
+          })
+        : { items: [] }
+      return { items: [...missing, ...result.items] }
+    },
+    onSuccess: (result) => {
+      setBatchResults(result.items)
+      refresh()
+    },
+    onError: error,
+  })
+  const tree = directoryTree(films.data?.items ?? [])
   return (
     <>
       <Alert
         type="info"
         showIcon
-        title="P3 · 字幕与安全归档"
-        description="基础必需资产全部上传并读回验证后才处理字幕。TMDB 中文作品跳过探测。归档需要最终清单及已确认的存储 MOVE 能力。"
+        title="P4 · 电影与剧集工作台"
+        description="整包电影或剧集基础必需资产全部远程验证后才处理字幕；中文剧每集零探测。任一集失败保留整包，目标已有目录不覆盖或合并。"
       />
-      <Card
-        className="form-card"
-        title="待刮削电影"
-        extra={
-          <Button
-            icon={<FileSearchOutlined />}
-            loading={scan.isPending}
-            onClick={() => scan.mutate()}
-          >
-            扫描目录
-          </Button>
-        }
-      >
-        <Input.Search
-          placeholder="搜索片名 / 路径"
-          allowClear
-          onChange={(event) => setFilter(event.target.value)}
-          style={{ maxWidth: 360, marginBottom: 16 }}
-        />
-        {films.isError && <Alert type="error" title={String(films.error)} />}
-        <Table<Film>
-          rowKey="id"
-          loading={films.isPending}
-          scroll={{ x: 1150 }}
-          dataSource={films.data?.items.filter((f) =>
-            `${f.title} ${f.path}`.toLowerCase().includes(filter.toLowerCase()),
+      <div className="library-layout">
+        <Card className="library-tree" title="目录与剧集">
+          <Tree
+            treeData={tree}
+            defaultExpandedKeys={['dir:', 'dir:/incoming', 'dir:/library']}
+            onSelect={(keys) => {
+              const key = String(keys[0] ?? 'dir:')
+              if (key.startsWith('dir:')) setDirectory(key.slice(4))
+              else setSelected(key.split(':')[1])
+            }}
+          />
+          {directory && (
+            <Button type="link" onClick={() => setDirectory('')}>
+              清除目录筛选
+            </Button>
           )}
-          locale={{
-            emptyText: <Empty description="保存连接配置后扫描目录，至少两次扫描用于判断稳定" />,
-          }}
-          columns={[
-            {
-              title: '电影',
-              key: 'title',
-              width: 240,
-              render: (_, f) => (
-                <>
-                  <Button type="link" onClick={() => setSelected(f.id)}>
-                    {f.title} {f.year ? `(${f.year})` : ''}
-                  </Button>
-                  <div>
-                    <Typography.Text type="secondary" ellipsis={{ tooltip: f.path }}>
-                      {f.path}
-                    </Typography.Text>
-                  </div>
-                </>
-              ),
-            },
-            {
-              title: '稳定性',
-              dataIndex: 'scan_status',
-              render: (value) => <Status value={value} />,
-            },
-            {
-              title: 'TMDB',
-              key: 'match',
-              render: (_, f) => (
-                <>
-                  <Status value={f.match_status} />
-                  {f.tmdb_id && (
-                    <small>
-                      #{f.tmdb_id} · {f.original_language ?? '语言未知'}
-                    </small>
-                  )}
-                </>
-              ),
-            },
-            ...['nfo', 'poster', 'fanart', 'actor'].map((kind) => ({
-              title: { nfo: 'NFO', poster: '海报', fanart: '背景图', actor: '头像' }[kind],
-              key: kind,
-              render: (_: unknown, f: Film) => assetState(f, kind),
-            })),
-            {
-              title: '字幕',
-              key: 'subtitle',
-              render: (_, f) => <Status value={f.subtitle_status} />,
-            },
-            {
-              title: '归档',
-              key: 'archive',
-              render: (_, f) => <Status value={f.archive_status} />,
-            },
-            {
-              title: '任务',
-              key: 'task',
-              render: (_, f) => (f.task_status ? <Status value={f.task_status} /> : '未开始'),
-            },
-            {
-              title: '操作',
-              key: 'action',
-              render: (_, f) => (
+        </Card>
+        <div className="library-main">
+          <Card
+            className="form-card"
+            title="媒体包 · 电影与电视剧"
+            extra={
+              <Button
+                icon={<FileSearchOutlined />}
+                loading={scan.isPending}
+                onClick={() => scan.mutate()}
+              >
+                扫描目录
+              </Button>
+            }
+          >
+            <Space wrap style={{ marginBottom: 16 }}>
+              <Segmented
+                value={kind}
+                onChange={setKind}
+                options={[
+                  { label: '全部', value: 'all' },
+                  { label: '电影', value: 'movie' },
+                  { label: '电视剧', value: 'tv' },
+                ]}
+              />
+              <Select
+                value={state}
+                onChange={setState}
+                style={{ width: 160 }}
+                options={[
+                  { label: '全部状态', value: 'all' },
+                  { label: '失败 / 待处理', value: 'failed' },
+                  { label: '缺字幕 / 待检查', value: 'subtitle' },
+                ]}
+              />
+              <Typography.Text>已选 {checked.length} 包</Typography.Text>
+              {(['start', 'pause', 'resume', 'retry'] as const).map((action) => (
                 <Button
-                  icon={<PlayCircleOutlined />}
-                  disabled={f.scan_status !== 'stable' || busy(f)}
-                  onClick={() => start.mutate(f)}
+                  key={action}
+                  disabled={!checked.length || batch.isPending}
+                  onClick={() => batch.mutate(action)}
                 >
-                  刮削并按策略归档
+                  {
+                    { start: '批量刮削', pause: '暂停', resume: '继续', retry: '重试失败项' }[
+                      action
+                    ]
+                  }
                 </Button>
-              ),
-            },
-          ]}
-        />
-      </Card>
+              ))}
+            </Space>
+            {!!batchResults.length && (
+              <Alert
+                style={{ marginBottom: 16 }}
+                type={batchResults.some((r) => !r.accepted) ? 'warning' : 'success'}
+                closable
+                onClose={() => setBatchResults([])}
+                title={`批量结果：${batchResults.filter((r) => r.accepted).length}/${batchResults.length} 已接受`}
+                description={
+                  <ul>
+                    {batchResults
+                      .filter((r) => !r.accepted)
+                      .map((r) => (
+                        <li key={r.id}>
+                          {r.id.slice(0, 10)}：{explain(r.error_code)}
+                        </li>
+                      ))}
+                  </ul>
+                }
+              />
+            )}
+            <Input.Search
+              placeholder="搜索片名 / 路径"
+              allowClear
+              onChange={(event) => setFilter(event.target.value)}
+              style={{ maxWidth: 360, marginBottom: 16 }}
+            />
+            {films.isError && <Alert type="error" title={String(films.error)} />}
+            <Table<Film>
+              rowKey="id"
+              loading={films.isPending}
+              scroll={{ x: 1150 }}
+              dataSource={visiblePackages(films.data?.items ?? [], filter, kind, state, directory)}
+              rowSelection={{
+                selectedRowKeys: checked,
+                onChange: (keys) => setChecked(keys.map(String)),
+                preserveSelectedRowKeys: true,
+              }}
+              expandable={{
+                rowExpandable: (f) => f.kind === 'tv',
+                expandedRowRender: (f) => (
+                  <EpisodesPanel
+                    film={f}
+                    busy={busy(f)}
+                    refresh={refresh}
+                    preview={setPreview}
+                    status={(value) => <Status value={value} />}
+                    retry={() => f.task_id && control.mutate({ id: f.task_id, action: 'retry' })}
+                  />
+                ),
+              }}
+              locale={{
+                emptyText: <Empty description="保存连接配置后扫描目录，至少两次扫描用于判断稳定" />,
+              }}
+              columns={[
+                {
+                  title: '电影 / 剧',
+                  key: 'title',
+                  width: 240,
+                  render: (_, f) => (
+                    <>
+                      <Button type="link" onClick={() => setSelected(f.id)}>
+                        {f.kind === 'tv' ? '剧 · ' : ''}
+                        {f.title} {f.year ? `(${f.year})` : ''}
+                      </Button>
+                      <div>
+                        <Typography.Text type="secondary" ellipsis={{ tooltip: f.path }}>
+                          {f.path}
+                        </Typography.Text>
+                      </div>
+                    </>
+                  ),
+                },
+                {
+                  title: '稳定性',
+                  dataIndex: 'scan_status',
+                  render: (value) => <Status value={value} />,
+                },
+                {
+                  title: 'TMDB',
+                  key: 'match',
+                  render: (_, f) => (
+                    <>
+                      <Status value={f.match_status} />
+                      {f.tmdb_id && (
+                        <small>
+                          #{f.tmdb_id} · {f.original_language ?? '语言未知'}
+                        </small>
+                      )}
+                    </>
+                  ),
+                },
+                ...['nfo', 'poster', 'fanart', 'actor'].map((kind) => ({
+                  title: { nfo: 'NFO', poster: '海报', fanart: '背景图', actor: '头像' }[kind],
+                  key: kind,
+                  render: (_: unknown, f: Film) => assetState(f, kind),
+                })),
+                {
+                  title: '字幕',
+                  key: 'subtitle',
+                  render: (_, f) => <Status value={f.subtitle_status} />,
+                },
+                {
+                  title: '归档',
+                  key: 'archive',
+                  render: (_, f) => <Status value={f.archive_status} />,
+                },
+                {
+                  title: '任务',
+                  key: 'task',
+                  render: (_, f) => (f.task_status ? <Status value={f.task_status} /> : '未开始'),
+                },
+                {
+                  title: '操作',
+                  key: 'action',
+                  render: (_, f) => (
+                    <Button
+                      icon={<PlayCircleOutlined />}
+                      disabled={f.scan_status !== 'stable' || busy(f)}
+                      onClick={() => start.mutate(f)}
+                    >
+                      刮削并按策略归档
+                    </Button>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        </div>
+      </div>
       <Drawer
         title={film?.title ?? '电影详情'}
         open={!!film}
@@ -352,30 +516,23 @@ export function MoviesPage() {
                 </Button>
               )}
             </Space>
-            {film.probe_status === 'probed' && (
-              <Card title="实际探测证据">
-                <Typography.Paragraph>
-                  片长 {film.probe_evidence.probe?.duration ?? '未知'} 秒 · 探测读取{' '}
-                  {film.probe_evidence.probe?.bytes_requested ?? '未记录'} 字节
-                </Typography.Paragraph>
-                <Table
-                  size="small"
-                  rowKey="index"
-                  pagination={false}
-                  dataSource={film.probe_evidence.probe?.streams ?? []}
-                  columns={[
-                    { title: '轨道', dataIndex: 'index' },
-                    { title: '类型', dataIndex: 'type' },
-                    { title: '编码', dataIndex: 'codec' },
-                    { title: '语言标签', dataIndex: 'language' },
-                    { title: '标题', dataIndex: 'title' },
-                    {
-                      title: '默认 / forced',
-                      render: (_, stream) =>
-                        `${stream.default ? '默认' : '—'} / ${stream.forced ? 'forced' : '—'}`,
-                    },
-                  ]}
+            {film.kind === 'tv' && (
+              <Card title="季与集">
+                <EpisodesPanel
+                  film={film}
+                  busy={busy(film)}
+                  refresh={refresh}
+                  preview={setPreview}
+                  status={(value) => <Status value={value} />}
+                  retry={() =>
+                    film.task_id && control.mutate({ id: film.task_id, action: 'retry' })
+                  }
                 />
+              </Card>
+            )}
+            {film.kind !== 'tv' && film.probe_status === 'probed' && (
+              <Card title="实际探测证据">
+                <ProbeEvidence item={film} />
               </Card>
             )}
             <Card title="匹配与人工指定">
@@ -389,7 +546,7 @@ export function MoviesPage() {
                   <InputNumber
                     min={1}
                     precision={0}
-                    placeholder="电影 TMDB ID"
+                    placeholder={film.kind === 'tv' ? '剧 TMDB ID' : '电影 TMDB ID'}
                     style={{ width: 200 }}
                   />
                 </Form.Item>
@@ -449,11 +606,41 @@ export function MoviesPage() {
                 columns={[
                   { title: '路径', dataIndex: 'path' },
                   {
+                    title: '要求',
+                    render: (_, a) =>
+                      a.required
+                        ? '必需'
+                        : ['season_poster', 'thumb'].includes(a.kind)
+                          ? '增强项'
+                          : '不适用 / 未纳入',
+                  },
+                  {
                     title: '状态',
                     dataIndex: 'status',
                     render: (value) => <Status value={value} />,
                   },
                   { title: '错误', dataIndex: 'error_code', render: (value) => explain(value) },
+                  {
+                    title: '局部重试',
+                    render: (_, a) => (
+                      <Button
+                        size="small"
+                        disabled={
+                          film.lease_active ||
+                          (film.archive_intent && film.archive_intent.status !== 'archived') ||
+                          !['failed', 'source_no_image', 'existing_unverified', 'pending'].includes(
+                            a.status,
+                          ) ||
+                          !['nfo', 'poster', 'fanart', 'actor', 'season_poster', 'thumb'].includes(
+                            a.kind,
+                          )
+                        }
+                        onClick={() => retryAsset.mutate(a)}
+                      >
+                        重试资产
+                      </Button>
+                    ),
+                  },
                   {
                     title: '预览',
                     render: (_, a) => (

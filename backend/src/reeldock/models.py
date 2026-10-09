@@ -76,6 +76,26 @@ class Media(Base):
     episode: Mapped[int | None] = mapped_column(Integer)
     probe_status: Mapped[str] = mapped_column(String(32), default="not_started")
     probe_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    mapping_status: Mapped[str] = mapped_column(String(40), default="not_applicable")
+    manual_mapping: Mapped[bool] = mapped_column(Boolean, default=False)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    artwork: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_version: Mapped[int | None] = mapped_column(Integer)
+    original_language: Mapped[str | None] = mapped_column(String(32))
+    subtitle_status: Mapped[str] = mapped_column(String(40), default="pending")
+    subtitle_reason: Mapped[str | None] = mapped_column(String(80))
+    subtitle_version: Mapped[int | None] = mapped_column(Integer)
+    subtitle_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class SeasonRecord(Base):
+    __tablename__ = "seasons"
+    package_id: Mapped[str] = mapped_column(ForeignKey("packages.id"), primary_key=True)
+    number: Mapped[int] = mapped_column(Integer, primary_key=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    artwork: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_version: Mapped[int | None] = mapped_column(Integer)
 
 
 class Asset(Base):
@@ -95,6 +115,8 @@ class Asset(Base):
     managed: Mapped[bool] = mapped_column(Boolean, default=False)
     remote_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     source_tmdb_id: Mapped[str | None] = mapped_column(String(32))
+    media_id: Mapped[str | None] = mapped_column(ForeignKey("media.id"), index=True)
+    season: Mapped[int | None] = mapped_column(Integer)
 
 
 class MovieRecord(Base):

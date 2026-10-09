@@ -8,14 +8,16 @@ from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 from sqlalchemy import select, text
 
 from reeldock import __version__
 from reeldock.database import Database
-from reeldock.domain import ConfigUpdate, normalize_path
+from reeldock.domain import ConfigUpdate, ProviderError, normalize_path
+from reeldock.episodes import parse_episode
+from reeldock.events import stream_events
 from reeldock.models import (
     Admin,
     ArchiveIntent,
@@ -27,10 +29,11 @@ from reeldock.models import (
     Media,
     MovieRecord,
     Package,
+    SeasonRecord,
     Task,
     TaskStep,
 )
-from reeldock.queue import Queue, revise_package
+from reeldock.queue import Queue, invalidate_package, revise_package
 from reeldock.runtime import Runtime
 from reeldock.security import (
     SettingsStore,
@@ -169,7 +172,7 @@ def create_app(
             session.execute(text("SELECT 1"))
             row = session.get(Configuration, 1)
             enabled = bool(row and app.state.store.vault.open(row.encrypted).move_verified)
-        return {"status": "ok", "version": __version__, "phase": "P3", "archive_enabled": enabled}
+        return {"status": "ok", "version": __version__, "phase": "P4", "archive_enabled": enabled}
 
     @app.get("/api/auth/status")
     def auth_status():
@@ -314,6 +317,32 @@ def create_app(
             raise HTTPException(409, "idempotency_key_conflict") from None
         return {"task_id": task_id}
 
+    def media_view(item, package):
+        current = item.subtitle_version == package.context_version
+        probed = (
+            item.probe_evidence.get("context_version") == package.context_version
+            and item.subtitle_status != "skipped_tmdb_chinese"
+        )
+        return {
+            "id": item.id,
+            "path": item.remote_path,
+            "season": item.season,
+            "episode": item.episode,
+            "title": item.details.get("title") or PurePosixPath(item.remote_path).stem,
+            "mapping_status": item.mapping_status,
+            "manual_mapping": item.manual_mapping,
+            "tmdb_id": item.details.get("external_id")
+            if item.metadata_version == package.context_version
+            else None,
+            "original_language": package.original_language,
+            "subtitle_status": item.subtitle_status if current else "pending",
+            "subtitle_reason": item.subtitle_reason if current else None,
+            "subtitle_evidence": item.subtitle_evidence if current else {},
+            "probe_status": item.probe_status if probed else "not_started",
+            "probe_evidence": item.probe_evidence if probed else {},
+            "error_code": item.error_code,
+        }
+
     def movie_view(session, row):
         package = session.get(Package, row.package_id)
         assets = list(
@@ -323,7 +352,7 @@ def create_app(
         )
         latest = session.scalar(
             select(Task)
-            .where(Task.package_id == package.id)
+            .where(Task.package_id == package.id, Task.kind != "asset_retry")
             .order_by(Task.created_at.desc())
             .limit(1)
         )
@@ -343,6 +372,29 @@ def create_app(
         )
         return {
             "id": package.id,
+            "kind": package.kind,
+            "context_version": package.context_version,
+            "lease_active": bool(package.lease_owner and (package.lease_until or 0) > time.time()),
+            "media": [
+                media_view(m, package)
+                for m in session.scalars(
+                    select(Media)
+                    .where(Media.package_id == package.id)
+                    .order_by(Media.season, Media.episode, Media.remote_path)
+                )
+            ],
+            "seasons": [
+                {
+                    "number": season.number,
+                    "title": season.details.get("title")
+                    or ("Specials" if season.number == 0 else f"Season {season.number}"),
+                }
+                for season in session.scalars(
+                    select(SeasonRecord)
+                    .where(SeasonRecord.package_id == package.id)
+                    .order_by(SeasonRecord.number)
+                )
+            ],
             "path": package.remote_path,
             "title": row.details.get("title") or row.title,
             "year": row.details.get("year") or row.year,
@@ -388,6 +440,8 @@ def create_app(
             "assets": [
                 {
                     "id": a.id,
+                    "media_id": a.media_id,
+                    "season": a.season,
                     "path": a.relative_path,
                     "kind": a.kind,
                     "required": a.required,
@@ -408,6 +462,7 @@ def create_app(
             ],
         }
 
+    @app.get("/api/packages", dependencies=[Depends(authenticated)])
     @app.get("/api/movies", dependencies=[Depends(authenticated)])
     def movies():
         with app.state.db.sessions.begin() as session:
@@ -418,6 +473,7 @@ def create_app(
                 ]
             }
 
+    @app.get("/api/packages/{package_id}", dependencies=[Depends(authenticated)])
     @app.get("/api/movies/{package_id}", dependencies=[Depends(authenticated)])
     def movie_detail(package_id: str):
         with app.state.db.sessions.begin() as session:
@@ -429,6 +485,7 @@ def create_app(
     class ManualMatch(BaseModel):
         tmdb_id: str = Field(pattern=r"^[1-9]\d{0,9}$")
 
+    @app.put("/api/packages/{package_id}/match", dependencies=[Depends(mutation)])
     @app.put("/api/movies/{package_id}/match", dependencies=[Depends(mutation)])
     def manual_match(package_id: str, body: ManualMatch):
         with app.state.db.sessions.begin() as session:
@@ -449,6 +506,147 @@ def create_app(
             session.add(Event(code="manual_tmdb_id_selected", details={"package_id": package_id}))
         return {"accepted": True}
 
+    class EpisodeMapping(BaseModel):
+        season: int = Field(ge=0, le=99)
+        episode: int = Field(ge=1, le=999)
+        expected_context_version: int = Field(ge=1)
+
+    @app.put("/api/packages/{package_id}/episodes/{media_id}", dependencies=[Depends(mutation)])
+    def correct_episode(package_id: str, media_id: str, body: EpisodeMapping):
+        with app.state.db.sessions.begin() as session:
+            package, item = session.get(Package, package_id), session.get(Media, media_id)
+            if not package or not item or item.package_id != package_id or package.kind != "tv":
+                raise HTTPException(404, "episode_not_found")
+            if body.expected_context_version != package.context_version:
+                raise HTTPException(409, "context_changed_submit_new_task")
+            if session.scalar(
+                select(ArchiveIntent.id).where(ArchiveIntent.package_id == package.id)
+            ):
+                raise HTTPException(409, "archive_existing_intent_requires_recovery")
+            if package.lease_owner and (package.lease_until or 0) > time.time():
+                raise HTTPException(409, "package_busy_pause_first")
+            try:
+                parse_episode(item.remote_path, package.remote_path)
+            except ProviderError as error:
+                if error.code == "multi_episode_file_unsupported":
+                    raise HTTPException(409, error.code) from None
+            if session.scalar(
+                select(Media.id).where(
+                    Media.package_id == package_id,
+                    Media.id != media_id,
+                    Media.season == body.season,
+                    Media.episode == body.episode,
+                )
+            ):
+                raise HTTPException(409, "duplicate_episode_mapping")
+            item.season, item.episode, item.manual_mapping = body.season, body.episode, True
+            item.mapping_status, item.error_code = "mapped", None
+            invalidate_package(package, "episode_mapping_changed")
+            record = session.get(MovieRecord, package.id)
+            record.scan_status, record.error_code = "waiting_stable", None
+            if session.get(SeasonRecord, (package_id, body.season)) is None:
+                session.add(SeasonRecord(package_id=package_id, number=body.season))
+            session.add(
+                Event(
+                    code="episode_mapping_corrected",
+                    details={
+                        "package_id": package_id,
+                        "media_id": media_id,
+                        "season": body.season,
+                        "episode": body.episode,
+                    },
+                )
+            )
+            version = package.context_version
+        return {"accepted": True, "context_version": version}
+
+    class BatchSubmit(BaseModel):
+        package_ids: list[str] = Field(min_length=1, max_length=100)
+        idempotency_key: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9:_-]+$")
+
+    @app.post("/api/batch/tasks", dependencies=[Depends(mutation)])
+    def batch_submit(body: BatchSubmit):
+        results = []
+        for index, package_id in enumerate(dict.fromkeys(body.package_ids)):
+            with app.state.db.sessions.begin() as session:
+                package = session.get(Package, package_id)
+            try:
+                if package is None:
+                    raise HTTPException(404, "package_not_found")
+                result = submit_task(
+                    SubmitTask(
+                        kind="package_pipeline",
+                        package_path=package.remote_path,
+                        idempotency_key=f"{body.idempotency_key}:{index}",
+                    )
+                )
+                results.append({"id": package_id, "accepted": True, **result})
+            except HTTPException as error:
+                results.append({"id": package_id, "accepted": False, "error_code": error.detail})
+        return {"items": results}
+
+    class BatchControl(BaseModel):
+        task_ids: list[str] = Field(min_length=1, max_length=100)
+        action: Literal["pause", "resume", "retry"]
+
+    @app.post("/api/batch/control", dependencies=[Depends(mutation)])
+    def batch_control(body: BatchControl):
+        results = []
+        for task_id in dict.fromkeys(body.task_ids):
+            try:
+                app.state.queue.control(task_id, body.action)
+                results.append({"id": task_id, "accepted": True})
+            except (LookupError, ValueError) as error:
+                results.append(
+                    {
+                        "id": task_id,
+                        "accepted": False,
+                        "error_code": "task_not_found"
+                        if isinstance(error, LookupError)
+                        else "task_action_not_allowed",
+                    }
+                )
+        return {"items": results}
+
+    @app.post("/api/assets/{asset_id}/retry", dependencies=[Depends(mutation)])
+    def retry_asset(asset_id: str, body: ConnectionCheck):
+        config, revision = app.state.store.load()
+        if config is None:
+            raise HTTPException(409, "configuration_required")
+        with app.state.db.sessions.begin() as session:
+            asset = session.get(Asset, asset_id)
+            if not asset or asset.kind not in {
+                "nfo",
+                "poster",
+                "fanart",
+                "actor",
+                "season_poster",
+                "thumb",
+            }:
+                raise HTTPException(404, "asset_retry_not_allowed")
+            package = session.get(Package, asset.package_id)
+            if session.scalar(
+                select(ArchiveIntent.id).where(
+                    ArchiveIntent.package_id == package.id, ArchiveIntent.status != "archived"
+                )
+            ):
+                raise HTTPException(409, "archive_existing_intent_requires_recovery")
+            if package.lease_owner and (package.lease_until or 0) > time.time():
+                raise HTTPException(409, "package_busy_pause_first")
+            if package.source_snapshot.get("config_revision") != revision:
+                raise HTTPException(409, "configuration_changed_submit_new_task")
+        try:
+            task_id = app.state.queue.submit(
+                "asset_retry",
+                package.remote_path,
+                body.idempotency_key,
+                revision,
+                checkpoint={"asset_id": asset_id},
+            )
+        except ValueError:
+            raise HTTPException(409, "idempotency_key_conflict") from None
+        return {"task_id": task_id}
+
     @app.get("/api/assets/{asset_id}/preview", dependencies=[Depends(authenticated)])
     def preview(asset_id: str):
         with app.state.db.sessions.begin() as session:
@@ -458,6 +656,8 @@ def create_app(
                 "poster",
                 "fanart",
                 "actor",
+                "season_poster",
+                "thumb",
                 "subtitle",
                 "manifest",
             }:
@@ -545,6 +745,21 @@ def create_app(
             raise HTTPException(409, "task_action_not_allowed") from None
         return {"accepted": True}
 
+    @app.get("/api/events/stream")
+    async def event_stream(
+        request: Request, after: int = Query(default=0, ge=0), auth=Depends(authenticated)
+    ):
+        raw = request.headers.get("last-event-id")
+        if raw is not None:
+            if not raw.isdecimal() or len(raw) > 18:
+                raise HTTPException(422, "invalid_event_cursor")
+            after = int(raw)
+        return StreamingResponse(
+            stream_events(app.state.db, auth.token_hash, after, request.is_disconnected),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+        )
+
     @app.get("/api/events", dependencies=[Depends(authenticated)])
     def events(after: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=200)):
         with app.state.db.sessions.begin() as session:
@@ -566,7 +781,7 @@ def create_app(
                 ],
                 "next_cursor": rows[-1].id if rows else after,
                 "transport": "polling",
-                "sse_planned": True,
+                "sse_available": True,
             }
 
     # Static frontend and API share one origin and one process in the development container.

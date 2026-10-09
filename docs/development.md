@@ -123,7 +123,9 @@ REST 接口均位于 `/api`。除健康检查、初始化状态和登录外需�
 | `POST /tasks/{id}/pause|resume|retry` | 暂停、继续、局部重试 |
 | `GET /events?after=cursor&limit=100` | 持久化有序事件；保存 next_cursor，断线后继续读取 |
 
-事件传输当前为轮询，SSE 尚未启用；后续 SSE 直接复用事件 ID / Last-Event-ID 语义。配置和事件接口均禁止缓存。
+P4 已启用 `GET /events/stream` SSE，支持 Last-Event-ID / after 重连重放；浏览器重连后重新拉取数据库状态，30 秒轮询兜底。配置和事件接口均禁止缓存。反向代理需关闭 SSE 缓冲。
+
+P4 新增 `/packages`（保留 `/movies` 兼容入口）、`PUT /packages/{id}/episodes/{media_id}`、`POST /assets/{id}/retry`、`POST /batch/tasks`、`POST /batch/control`。完整任务 kind=package_pipeline，基础任务 movie_base 也可处理剧包但止于基础资产。输入范围、稳定性、版本、租约及归档意图保护仍适用。剧集布局、人工编号与验证命令见 [P4 指南](p4-tools.md)。
 
 SQLite 开启 WAL、外键和 busy_timeout。短 `BEGIN IMMEDIATE` 事务将任务领取、包租约、状态和事件一起提交；外部 I/O 不放进数据库事务。所有数据库事务目前序列化，适合单实例 P1，后续按实测负载优化只读事务。
 

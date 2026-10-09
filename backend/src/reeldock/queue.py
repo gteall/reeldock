@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from reeldock.domain import BASE_KINDS, STAGES, ProviderError, Stage
-from reeldock.models import Asset, Configuration, Event, Package, Task, TaskStep
+from reeldock.models import Asset, Configuration, Event, Media, Package, Task, TaskStep
 
 ACTIVE = {"queued", "running", "retry_wait", "paused", "blocked"}
 SUBTITLE_PASSED = {
+    "all_media_verified",
     "skipped_tmdb_chinese",
     "default_audio_chinese",
     "embedded_zh_hans",
@@ -56,6 +57,19 @@ def base_verified(session, package: Package) -> bool:
         return False
     if not {"nfo", "poster", "fanart"}.issubset({asset.kind for asset in selected}):
         return False
+    if package.kind == "tv":
+        media = list(session.scalars(select(Media).where(Media.package_id == package.id)))
+        if not media or any(
+            m.metadata_version != package.context_version
+            or not m.details
+            or m.original_language != package.original_language
+            for m in media
+        ):
+            return False
+        if {a.media_id for a in selected if a.kind == "nfo" and a.media_id} != {
+            m.id for m in media
+        } or not any(a.relative_path == "tvshow.nfo" and a.kind == "nfo" for a in selected):
+            return False
     return all(
         asset.kind in BASE_KINDS
         and asset.required
@@ -74,6 +88,33 @@ def gate(session, package: Package, stage: str):
     ):
         raise ProviderError("base_assets_not_remote_verified")
     if stage in {Stage.MANIFEST, Stage.ARCHIVE}:
+        if package.kind == "tv":
+            media = list(session.scalars(select(Media).where(Media.package_id == package.id)))
+            for item in media:
+                if (
+                    item.subtitle_status not in SUBTITLE_PASSED - {"all_media_verified"}
+                    or item.subtitle_version != package.context_version
+                    or item.original_language != package.original_language
+                ):
+                    raise ProviderError("subtitle_policy_not_satisfied")
+                if item.subtitle_status in {"external_verified", "downloaded_verified"}:
+                    subs = list(
+                        session.scalars(
+                            select(Asset).where(
+                                Asset.media_id == item.id,
+                                Asset.kind == "subtitle",
+                                Asset.required.is_(True),
+                            )
+                        )
+                    )
+                    if not subs or any(
+                        a.status != "remote_verified"
+                        or a.verified_version != package.context_version
+                        or not a.sha256
+                        or a.remote_verified_at is None
+                        for a in subs
+                    ):
+                        raise ProviderError("subtitle_policy_not_satisfied")
         if (
             package.subtitle_status not in SUBTITLE_PASSED
             or package.subtitle_version != package.context_version
@@ -146,8 +187,13 @@ class Queue:
     def __init__(self, db, *, lease_seconds: float = 30):
         self.db, self.lease_seconds = db, lease_seconds
 
-    def submit(self, kind: str, path: str, key: str, config_revision: int) -> str:
-        payload = hashlib.sha256(json.dumps([kind, path, config_revision]).encode()).hexdigest()
+    def submit(
+        self, kind: str, path: str, key: str, config_revision: int, *, checkpoint=None
+    ) -> str:
+        values = [kind, path, config_revision]
+        if checkpoint is not None:
+            values.append(checkpoint)
+        payload = hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
         with self.db.sessions.begin() as session:
             old = session.scalar(select(Task).where(Task.idempotency_key == key))
             if old:
@@ -169,17 +215,17 @@ class Queue:
                 payload_hash=payload,
                 context_version=package.context_version,
                 config_revision=config_revision,
-                stage=kind if kind in {"connection_check", "scan"} else Stage.MATCH,
+                stage=kind if kind in {"connection_check", "scan", "asset_retry"} else Stage.MATCH,
             )
             session.add(task)
             session.flush()
             stages = (
                 [kind]
-                if kind in {"connection_check", "scan"}
+                if kind in {"connection_check", "scan", "asset_retry"}
                 else (STAGES[:2] if kind == "movie_base" else STAGES)
             )
             for stage in stages:
-                session.add(TaskStep(task_id=task.id, stage=stage))
+                session.add(TaskStep(task_id=task.id, stage=stage, checkpoint=checkpoint or {}))
             emit(session, "task_submitted", task.id, kind=kind)
             return task.id
 
@@ -333,7 +379,7 @@ class Queue:
             emit(session, "step_completed", task.id, stage=stage)
             if stage == Stage.BASE:
                 package.base_status = "remote_verified"
-            if stage in {"connection_check", "scan", Stage.ARCHIVE} or (
+            if stage in {"connection_check", "scan", "asset_retry", Stage.ARCHIVE} or (
                 task.kind == "movie_base" and stage == Stage.BASE
             ):
                 task.status = "completed"

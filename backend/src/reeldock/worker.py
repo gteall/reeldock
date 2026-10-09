@@ -44,6 +44,7 @@ class Worker:
             "scan": self.movies.scan,
             "match_metadata": self.movies.match,
             "base_assets_verified": self.movies.base,
+            "asset_retry": self.movies.retry_asset,
             **(handlers or {}),
         }
         self.completion = CompletionPipeline(
@@ -98,7 +99,7 @@ class Worker:
                 raise ProviderError("stage_not_implemented_p1")
             checkpoint = await handler(replace(claim, stage=stage))
             self.queue.finish_step(claim, stage, checkpoint)
-            if stage in {"connection_check", "scan"} or (
+            if stage in {"connection_check", "scan", "asset_retry", "archive"} or (
                 claim.kind == "movie_base" and stage == "base_assets_verified"
             ):
                 return

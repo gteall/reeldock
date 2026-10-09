@@ -170,6 +170,16 @@ class Episode(Movie):
     series_id: str
     season: int
     episode: int
+    still_path: str | None = None
+
+
+class Season(BaseModel):
+    series_id: str
+    season: int
+    title: str
+    overview: str = ""
+    poster_path: str | None = None
+    episodes: list[Episode] = Field(default_factory=list)
 
 
 class SubtitleCandidate(BaseModel):

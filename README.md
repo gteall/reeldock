@@ -2,7 +2,7 @@
 
 面向 NAS 的影视刮削与归档工具：从 OpenList 提供的 WebDAV 待刮削目录发现影视文件，通过 TMDB 获取元数据，将 NFO、海报、背景图、演员头像和所需字幕写回 WebDAV，全部必需项验证通过后移动整个媒体目录。
 
-**当前状态：P3 字幕与安全归档已实现。** 基础资产全部上传并完整读回后，再按 original_language 判断字幕策略；zh/cn 跳过一切探测与视频读取。明确非中文可探测、复用内置 / 外挂或通过射手补齐，随后生成最终清单并持久化安全 MOVE 意图。支持局部重试与移动中断核对恢复；自动归档默认关闭，需确认存储范围能力。测试及真实环境边界见 [开发进度](docs/progress.md)、[P3 指南](docs/p3-tools.md)及[兼容性记录](docs/compatibility.md)。
+**当前状态：P4 电视剧与媒体工作台已实现。** 电影与剧集共用上传、字幕及安全归档组件；整包基础必需资产验证后才逐集处理字幕，中文剧全部零探测。支持季集人工修正、逐集 NFO、共享图片与 `.actors`、独立增强图、失败集恢复、目录树、批量操作及 SSE 重连。目标已有剧目录时拒绝合并 / 覆盖。自动归档默认关闭，需确认存储范围能力。证据与边界见 [开发进度](docs/progress.md)、[P4 指南](docs/p4-tools.md)及[兼容性记录](docs/compatibility.md)。
 
 本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
 
@@ -38,6 +38,8 @@
 - [P0 工具运行说明](docs/p0-tools.md)
 - [本机开发与容器启动](docs/development.md)
 - [P2 电影刮削与验证](docs/p2-tools.md)
+- [P3 字幕与安全归档](docs/p3-tools.md)
+- [P4 剧集与批量工作台](docs/p4-tools.md)
 - [兼容性与实测边界](docs/compatibility.md)
 - [开发进度与交接](docs/progress.md)
 - [总体架构与业务规则](docs/architecture.md)

@@ -385,3 +385,35 @@ pre {
   border-radius: 6px;
   color: #7e8c86;
 }
+
+.library-layout {
+  display: flex;
+  gap: 18px;
+  margin-top: 18px;
+  align-items: flex-start;
+}
+.library-tree {
+  width: 245px;
+  flex-shrink: 0;
+  overflow: auto;
+  max-height: 75vh;
+}
+.library-main {
+  flex: 1;
+  min-width: 0;
+}
+.library-main .form-card {
+  margin-top: 0;
+}
+@media (max-width: 1050px) {
+  .library-layout {
+    flex-direction: column;
+  }
+  .library-tree {
+    width: 100%;
+    max-height: 260px;
+  }
+  .library-main {
+    width: 100%;
+  }
+}

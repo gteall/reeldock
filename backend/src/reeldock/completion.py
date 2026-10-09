@@ -5,14 +5,14 @@ import json
 import time
 from pathlib import PurePosixPath
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from reeldock.cache import sha256
 from reeldock.domain import ProviderError, Stage
 from reeldock.models import ArchiveIntent, Asset, Media, MovieRecord, Package
 from reeldock.probe import MediaProbe, validate_vobsub_pair
 from reeldock.providers.shooter import ShooterProvider
-from reeldock.queue import emit, gate
+from reeldock.queue import SUBTITLE_PASSED, emit, gate
 from reeldock.subtitles import (
     MAX_SUBTITLE,
     default_audio,
@@ -93,16 +93,30 @@ class CompletionPipeline:
                 required=len(package.base_required),
             )
 
-    def result(self, claim, status, reason=None, evidence=None):
+    def result(self, claim, status, reason=None, evidence=None, *, media_id=None):
         self.check(claim)
         with self.db.sessions.begin() as session:
             task, package = self.queue._owned(session, claim)
             self.queue._current(session, task, package)
-            package.subtitle_status, package.subtitle_reason = status, reason
-            package.subtitle_version = package.context_version
-            package.subtitle_evidence = evidence or {}
-            emit(session, "subtitle_policy_result", claim.task_id, status=status, reason=reason)
+            row = session.get(Media, media_id) if media_id else package
+            row.subtitle_status, row.subtitle_reason = status, reason
+            row.subtitle_version = package.context_version
+            row.subtitle_evidence = evidence or {}
+            if media_id:
+                row.original_language = package.original_language
+                row.error_code = reason if status in {"failed", "needs_review"} else None
+            emit(
+                session,
+                "subtitle_policy_result",
+                claim.task_id,
+                status=status,
+                reason=reason,
+                media_id=media_id,
+            )
         return {"status": status, **(evidence or {})}
+
+    def media_result(self, media_id, claim, status, reason=None, evidence=None):
+        return self.result(claim, status, reason, evidence, media_id=media_id)
 
     async def verify_media(self, claim, storage, media):
         self.check(claim)
@@ -144,7 +158,7 @@ class CompletionPipeline:
                     todo.append((entry.path, depth + 1))
         return sorted(result, key=lambda e: e["path"])
 
-    async def save_asset(self, claim, storage, path, kind, body):
+    async def save_asset(self, claim, storage, path, kind, body, *, media_id=None):
         """Immutable create, intent-before-PUT, full reconciliation after lost response."""
         self.check(claim)
         with self.db.sessions.begin() as session:
@@ -159,6 +173,7 @@ class CompletionPipeline:
             if asset.sha256 and asset.managed and asset.sha256 != sha256(body):
                 raise ProviderError("existing_asset_conflict")
             asset.required, asset.managed = True, True
+            asset.media_id = media_id
             asset.sha256, asset.cache_key = sha256(body), self.movies.cache.put(body)
             asset.status, asset.error_code = "cached", None
             remote, asset_id = package.remote_path + "/" + path, asset.id
@@ -218,26 +233,70 @@ class CompletionPipeline:
             branch = original_class(package.original_language, config.chinese_languages)
             with self.db.sessions.begin() as session:
                 self.queue._owned(session, claim)
+                media = list(
+                    session.scalars(
+                        select(Media)
+                        .where(Media.package_id == package.id)
+                        .order_by(Media.season, Media.episode, Media.remote_path)
+                    )
+                )
                 for old in session.scalars(
                     select(Asset).where(
                         Asset.package_id == package.id, Asset.kind.in_(["subtitle", "manifest"])
                     )
                 ):
-                    old.required = False
-            if branch == "chinese":
-                return self.result(
-                    claim,
-                    "skipped_tmdb_chinese",
-                    "tmdb_original_language_chinese",
-                    {"actual_audio": "not_probed"},
+                    if (
+                        old.kind == "manifest"
+                        or branch != "foreign"
+                        or old.verified_version != claim.context_version
+                    ):
+                        old.required = False
+            if not media:
+                raise ProviderError("media_mapping_ambiguous")
+            if branch in {"chinese", "unknown"}:
+                status = "skipped_tmdb_chinese" if branch == "chinese" else "needs_review"
+                reason = (
+                    "tmdb_original_language_chinese"
+                    if branch == "chinese"
+                    else "tmdb_original_language_unknown"
                 )
-            if branch == "unknown":
-                self.result(claim, "needs_review", "tmdb_original_language_unknown")
-                raise ProviderError("tmdb_original_language_unknown")
-            try:
-                return await self.foreign(claim, storage, config, package, record)
-            except ProviderError as error:
-                review = error.code in {
+                evidence = {"actual_audio": "not_probed"}
+                for item in media:
+                    self.media_result(item.id, claim, status, reason, evidence)
+                result = self.result(claim, status, reason, evidence)
+                if branch == "unknown":
+                    raise ProviderError(reason)
+                return result
+            failures, results = [], {}
+            for item in media:
+                try:
+                    reused = await self.reuse_media(claim, storage, item, package)
+                    results[item.id] = reused or await self.foreign(
+                        claim, storage, config, package, record, item
+                    )
+                except ProviderError as error:
+                    if error.code in {
+                        "lease_lost",
+                        "pause_requested",
+                        "context_changed_submit_new_task",
+                        "configuration_changed_submit_new_task",
+                    }:
+                        raise
+                    review = error.code in {
+                        "default_audio_ambiguous",
+                        "default_audio_unknown",
+                        "embedded_subtitle_ambiguous",
+                        "subtitle_duration_unknown",
+                        "subtitle_timeline_mismatch",
+                        "source_changed_scan_again",
+                    }
+                    self.media_result(
+                        item.id, claim, "needs_review" if review else "failed", error.code
+                    )
+                    failures.append(error)
+            if failures:
+                first = failures[0]
+                review = first.code in {
                     "default_audio_ambiguous",
                     "default_audio_unknown",
                     "embedded_subtitle_ambiguous",
@@ -245,15 +304,55 @@ class CompletionPipeline:
                     "subtitle_timeline_mismatch",
                     "source_changed_scan_again",
                 }
-                self.result(claim, "needs_review" if review else "failed", error.code)
-                raise
+                self.result(
+                    claim, "needs_review" if review else "failed", first.code, {"media": results}
+                )
+                raise first
+            await self.movies.source(claim, storage, config)
+            if len(media) == 1:
+                result = results[media[0].id]
+                return self.result(
+                    claim,
+                    result["status"],
+                    evidence={k: v for k, v in result.items() if k != "status"},
+                )
+            return self.result(claim, "all_media_verified", evidence={"media": results})
 
-    async def foreign(self, claim, storage, config, package, record):
-        with self.db.sessions.begin() as session:
-            media = list(session.scalars(select(Media).where(Media.package_id == package.id)))
-        if len(media) != 1:
-            raise ProviderError("media_mapping_ambiguous")
-        media = media[0]
+    async def reuse_media(self, claim, storage, media, package):
+        if (
+            media.subtitle_version != claim.context_version
+            or media.subtitle_status not in SUBTITLE_PASSED
+            or media.original_language != package.original_language
+        ):
+            return None
+        await self.verify_media(claim, storage, media)
+        if media.subtitle_status in {"external_verified", "downloaded_verified"}:
+            with self.db.sessions.begin() as session:
+                assets = list(
+                    session.scalars(
+                        select(Asset).where(
+                            Asset.media_id == media.id,
+                            Asset.required.is_(True),
+                            Asset.kind == "subtitle",
+                        )
+                    )
+                )
+            if not assets:
+                return None
+            for asset in assets:
+                if (
+                    asset.status != "remote_verified"
+                    or asset.verified_version != claim.context_version
+                ):
+                    return None
+                body = await storage.read_small(
+                    package.remote_path + "/" + asset.relative_path, 20 * 1024 * 1024
+                )
+                if sha256(body) != asset.sha256:
+                    raise ProviderError("upload_verification_failed")
+        return {"status": media.subtitle_status, **media.subtitle_evidence}
+
+    async def foreign(self, claim, storage, config, package, record, media):
         await self.verify_media(claim, storage, media)
         # Reuse evidence only for this exact source/context and policy revision.
         saved = media.probe_evidence
@@ -277,7 +376,9 @@ class CompletionPipeline:
                 }
             await self.verify_media(claim, storage, media)
             if audio["language"] == "zh":
-                return self.result(claim, "default_audio_chinese", evidence={"audio": audio})
+                return self.media_result(
+                    media.id, claim, "default_audio_chinese", evidence={"audio": audio}
+                )
             # A valid existing external already satisfies policy; avoid an unnecessary
             # full embedded extraction consuming the shared media byte/time budget.
             entries = await self.inventory(claim, storage, package.remote_path)
@@ -329,15 +430,19 @@ class CompletionPipeline:
                 if pair:
                     for pair_path, pair_body in pair:
                         await self.remember_external(
-                            claim, storage, pair_path, pair_body, package.remote_path
+                            claim, storage, pair_path, pair_body, package.remote_path, media.id
                         )
-                    return self.result(
+                    return self.media_result(
+                        media.id,
                         claim,
                         "external_verified",
                         evidence={"audio": audio, "external": evidence, "path": entry["path"]},
                     )
-                await self.remember_external(claim, storage, remote, body, package.remote_path)
-                return self.result(
+                await self.remember_external(
+                    claim, storage, remote, body, package.remote_path, media.id
+                )
+                return self.media_result(
+                    media.id,
                     claim,
                     "external_verified",
                     evidence={"audio": audio, "external": evidence, "path": entry["path"]},
@@ -360,7 +465,8 @@ class CompletionPipeline:
                         continue
                     raise
                 await self.verify_media(claim, storage, media)
-                return self.result(
+                return self.media_result(
+                    media.id,
                     claim,
                     "embedded_zh_hans",
                     evidence={
@@ -375,7 +481,12 @@ class CompletionPipeline:
         async with self.subtitle_factory(config) as provider:
             self.check(claim)
             candidates = await provider.search(
-                hash_value, {"filename": PurePosixPath(media.remote_path).name}
+                hash_value,
+                {
+                    "filename": PurePosixPath(media.remote_path).name,
+                    "season": media.season,
+                    "episode": media.episode,
+                },
             )
             if not candidates:
                 raise ProviderError("subtitle_no_match")
@@ -391,17 +502,20 @@ class CompletionPipeline:
                     failures.append(error.code)
                     continue
                 # Never label an unclassified download as simplified Chinese.
-                path = (
+                filename = (
                     PurePosixPath(media.remote_path).stem
                     + ".shooter."
                     + sha256(body)[:12]
                     + "."
                     + candidate.format
                 )
-                await self.save_asset(claim, storage, path, "subtitle", body)
+                parent = PurePosixPath(media.remote_path).parent.relative_to(package.remote_path)
+                path = str(parent / filename)
+                await self.save_asset(claim, storage, path, "subtitle", body, media_id=media.id)
                 await self.verify_media(claim, storage, media)
                 await self.movies.source(claim, storage, config)
-                return self.result(
+                return self.media_result(
+                    media.id,
                     claim,
                     "downloaded_verified",
                     evidence={"audio": audio, "download": evidence, "path": path},
@@ -424,7 +538,7 @@ class CompletionPipeline:
                 session.add(asset)
             asset.status, asset.error_code, asset.required = "failed", code, False
 
-    async def remember_external(self, claim, storage, remote, body, root):
+    async def remember_external(self, claim, storage, remote, body, root, media_id):
         self.check(claim)
         snapshot = (await storage.stat(remote)).model_dump()
         path = str(PurePosixPath(remote).relative_to(root))
@@ -441,9 +555,28 @@ class CompletionPipeline:
                 )
                 session.add(asset)
             asset.required, asset.status, asset.error_code = True, "remote_verified", None
+            asset.media_id = media_id
             asset.sha256, asset.cache_key = sha256(body), self.movies.cache.put(body)
             asset.remote_verified_at, asset.verified_version = time.time(), claim.context_version
             asset.remote_snapshot = snapshot
+
+    def media_manifest(self, claim, package):
+        with self.db.sessions.begin() as session:
+            return [
+                {
+                    "id": m.id,
+                    "path": str(PurePosixPath(m.remote_path).relative_to(package.remote_path)),
+                    "season": m.season,
+                    "episode": m.episode,
+                    "tmdb_id": m.details.get("external_id"),
+                    "original_language": package.original_language,
+                    "subtitle_status": m.subtitle_status,
+                    "subtitle_evidence": m.subtitle_evidence,
+                }
+                for m in session.scalars(
+                    select(Media).where(Media.package_id == package.id).order_by(Media.remote_path)
+                )
+            ]
 
     async def manifest(self, claim):
         config = self.movies.configuration(claim)
@@ -460,7 +593,12 @@ class CompletionPipeline:
                     session.scalars(
                         select(Asset).where(
                             Asset.package_id == package.id,
-                            Asset.required.is_(True),
+                            or_(
+                                Asset.required.is_(True),
+                                (Asset.kind.in_(["season_poster", "thumb"]))
+                                & (Asset.status == "remote_verified")
+                                & (Asset.verified_version == claim.context_version),
+                            ),
                             Asset.kind != "manifest",
                         )
                     )
@@ -486,10 +624,16 @@ class CompletionPipeline:
                     "original_language": package.original_language,
                     "subtitle_status": package.subtitle_status,
                     "subtitle_evidence": package.subtitle_evidence,
+                    "media": self.media_manifest(claim, package),
                     "source": package.remote_path,
                     "inventory": inventory,
                     "assets": [
-                        {"path": a.relative_path, "kind": a.kind, "sha256": a.sha256}
+                        {
+                            "path": a.relative_path,
+                            "kind": a.kind,
+                            "sha256": a.sha256,
+                            "required": a.required,
+                        }
                         for a in sorted(assets, key=lambda a: a.relative_path)
                     ],
                 }
@@ -552,17 +696,44 @@ class CompletionPipeline:
                     parsed.get("package_id") == claim.package_id
                     and parsed.get("context_version") == claim.context_version
                 ):
+                    hashes = {a["path"]: a["sha256"] for a in parsed["assets"]}
+                    # Earlier manifests omitted enhancement hashes. A pre-MOVE full
+                    # readback is usable only when bound to this intent's exact source
+                    # snapshot and context. Never relax media or ordinary attachments.
+                    expected = {e["path"]: e for e in intent.snapshot["entries"]}
+                    with self.db.sessions.begin() as session:
+                        enhancements = list(
+                            session.scalars(
+                                select(Asset).where(
+                                    Asset.package_id == claim.package_id,
+                                    Asset.kind.in_(["season_poster", "thumb"]),
+                                    Asset.status == "remote_verified",
+                                    Asset.verified_version == claim.context_version,
+                                    Asset.remote_verified_at <= intent.created_at,
+                                )
+                            )
+                        )
+                    for asset in enhancements:
+                        entry = expected.get(asset.relative_path)
+                        source = asset.remote_snapshot
+                        if (
+                            entry
+                            and asset.sha256
+                            and source.get("path") == intent.source + "/" + asset.relative_path
+                            and all(
+                                source.get(k) == entry.get(k) for k in ("size", "etag", "modified")
+                            )
+                        ):
+                            hashes.setdefault(asset.relative_path, asset.sha256)
                     inventory = await self.inventory(claim, storage, intent.target)
-                    if destination_matches(
-                        intent.snapshot["entries"], inventory, {a["path"] for a in parsed["assets"]}
-                    ):
-                        # Full-read every required small asset at the destination.
-                        for asset in parsed["assets"]:
+                    if destination_matches(intent.snapshot["entries"], inventory, set(hashes)):
+                        # Full-read all included small assets at the destination.
+                        for path, expected_hash in hashes.items():
                             self.movies.check(claim)
                             body = await storage.read_small(
-                                intent.target + "/" + asset["path"], 20 * 1024 * 1024
+                                intent.target + "/" + path, 20 * 1024 * 1024
                             )
-                            if sha256(body) != asset["sha256"]:
+                            if sha256(body) != expected_hash:
                                 return "move_unknown"
                         return "archived"
         return "move_unknown"
@@ -702,6 +873,18 @@ class CompletionPipeline:
             self.queue._current(session, task, package)
             old = intent.source
             package.remote_path, package.archive_status = intent.target, "archived"
+            package.source_snapshot = {
+                **package.source_snapshot,
+                "entries": [
+                    {
+                        **entry,
+                        "path": intent.target + entry["path"][len(old) :]
+                        if entry["path"].startswith(old + "/")
+                        else entry["path"],
+                    }
+                    for entry in package.source_snapshot.get("entries", [])
+                ],
+            }
             session.get(ArchiveIntent, intent.id).status = "archived"
             record = session.get(MovieRecord, package.id)
             record.scan_status = "archived"

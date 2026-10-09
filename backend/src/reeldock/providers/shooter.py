@@ -8,6 +8,7 @@ import httpx
 from pydantic import SecretStr
 
 from reeldock.domain import ProviderError, SubtitleCandidate
+from reeldock.episodes import PAIR
 from reeldock.providers.webdav import WebDAVProvider
 from reeldock.subtitles import MAX_SUBTITLE
 
@@ -101,6 +102,17 @@ class ShooterProvider:
                 raise ValueError()
             candidates = []
             for i, row in enumerate(sorted(rows[:10], key=rank)):
+                context = episode_context or {}
+                numbers = {
+                    tuple(int(g) for g in m.groups() if g is not None)
+                    for m in PAIR.finditer(str(row.get("Desc", "")))
+                }
+                if (
+                    context.get("season") is not None
+                    and numbers
+                    and numbers != {(context["season"], context["episode"])}
+                ):
+                    continue
                 delay = row.get("Delay", 0)
                 if type(delay) is not int or abs(delay) > 600000:
                     raise ValueError()
