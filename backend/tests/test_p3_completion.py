@@ -147,6 +147,31 @@ async def test_existing_external_matrix(foundation, tmp_path, variant):
     assert bool(env[6].calls) == (variant != "english")
 
 
+async def test_valid_external_skips_embedded_extraction(foundation, tmp_path, monkeypatch):
+    env = await setup(foundation, tmp_path)
+    dav, probe, shooter = env[3], env[5], env[6]
+    dav.files["/incoming/Example (2020)/Example.2020.1080p.en.srt"] = SRT
+    probe.data["streams"].append(
+        {
+            "index": 2,
+            "type": "subtitle",
+            "codec": "subrip",
+            "language": "chi",
+            "title": "简体",
+        }
+    )
+
+    async def forbidden_extract(index):
+        pytest.fail("valid external must avoid unnecessary embedded extraction")
+
+    monkeypatch.setattr(probe, "extract", forbidden_extract)
+    task, package = await run(env)
+    assert task.status == "completed", task.error_code
+    assert package.subtitle_status == "external_verified"
+    assert probe.calls == {"probe": 1} and not shooter.calls
+    assert dav.calls["media_reads"] == 0 and dav.calls["move"] == 1
+
+
 async def test_no_subtitle_blocks_archive_retry_reuses_base(foundation, tmp_path):
     env = await setup(foundation, tmp_path)
     db, _, queue, dav, tmdb, probe, shooter, worker, _ = env

@@ -278,6 +278,70 @@ class CompletionPipeline:
             await self.verify_media(claim, storage, media)
             if audio["language"] == "zh":
                 return self.result(claim, "default_audio_chinese", evidence={"audio": audio})
+            # A valid existing external already satisfies policy; avoid an unnecessary
+            # full embedded extraction consuming the shared media byte/time budget.
+            entries = await self.inventory(claim, storage, package.remote_path)
+            failures = []
+            for entry in entries:
+                remote = package.remote_path + "/" + entry["path"]
+                if entry["is_dir"] or not matches_external(remote, media.remote_path):
+                    continue
+                extension = PurePosixPath(remote).suffix.lstrip(".").lower()
+                pair = []
+                try:
+                    self.check(claim)
+                    body = await storage.read_small(
+                        remote, MAX_SUBTITLE if extension != "sub" else 20 * 1024 * 1024
+                    )
+                    if extension in {"idx", "sub"}:
+                        idx_path = str(PurePosixPath(remote).with_suffix(".idx"))
+                        sub_path = str(PurePosixPath(remote).with_suffix(".sub"))
+                        if not await self.exists(storage, idx_path) or not await self.exists(
+                            storage, sub_path
+                        ):
+                            raise ProviderError("subtitle_pair_incomplete")
+                        idx = (
+                            body
+                            if extension == "idx"
+                            else await storage.read_small(idx_path, MAX_SUBTITLE)
+                        )
+                        sub = (
+                            body
+                            if extension == "sub"
+                            else await storage.read_small(sub_path, 20 * 1024 * 1024)
+                        )
+                        evidence = await validate_vobsub_pair(
+                            self.probe,
+                            idx,
+                            sub,
+                            data["duration"],
+                            lambda: self.check(claim),
+                            config,
+                        )
+                        pair = [(idx_path, idx), (sub_path, sub)]
+                    else:
+                        _, evidence = validate_subtitle(body, extension, data["duration"])
+                    await self.verify_media(claim, storage, media)
+                except ProviderError as error:
+                    failures.append(error.code)
+                    await self.external_failure(claim, entry["path"], error.code)
+                    continue
+                if pair:
+                    for pair_path, pair_body in pair:
+                        await self.remember_external(
+                            claim, storage, pair_path, pair_body, package.remote_path
+                        )
+                    return self.result(
+                        claim,
+                        "external_verified",
+                        evidence={"audio": audio, "external": evidence, "path": entry["path"]},
+                    )
+                await self.remember_external(claim, storage, remote, body, package.remote_path)
+                return self.result(
+                    claim,
+                    "external_verified",
+                    evidence={"audio": audio, "external": evidence, "path": entry["path"]},
+                )
             for stream in data["streams"]:
                 if stream["type"] != "subtitle" or not simplified_track(stream):
                     continue
@@ -305,63 +369,6 @@ class CompletionPipeline:
                         "stream_index": stream["index"],
                     },
                 )
-        entries = await self.inventory(claim, storage, package.remote_path)
-        failures = []
-        for entry in entries:
-            remote = package.remote_path + "/" + entry["path"]
-            if entry["is_dir"] or not matches_external(remote, media.remote_path):
-                continue
-            extension = PurePosixPath(remote).suffix.lstrip(".").lower()
-            pair = []
-            try:
-                self.check(claim)
-                body = await storage.read_small(
-                    remote, MAX_SUBTITLE if extension != "sub" else 20 * 1024 * 1024
-                )
-                if extension in {"idx", "sub"}:
-                    idx_path = str(PurePosixPath(remote).with_suffix(".idx"))
-                    sub_path = str(PurePosixPath(remote).with_suffix(".sub"))
-                    if not await self.exists(storage, idx_path) or not await self.exists(
-                        storage, sub_path
-                    ):
-                        raise ProviderError("subtitle_pair_incomplete")
-                    idx = (
-                        body
-                        if extension == "idx"
-                        else await storage.read_small(idx_path, MAX_SUBTITLE)
-                    )
-                    sub = (
-                        body
-                        if extension == "sub"
-                        else await storage.read_small(sub_path, 20 * 1024 * 1024)
-                    )
-                    evidence = await validate_vobsub_pair(
-                        self.probe, idx, sub, data["duration"], lambda: self.check(claim), config
-                    )
-                    pair = [(idx_path, idx), (sub_path, sub)]
-                else:
-                    _, evidence = validate_subtitle(body, extension, data["duration"])
-                await self.verify_media(claim, storage, media)
-            except ProviderError as error:
-                failures.append(error.code)
-                await self.external_failure(claim, entry["path"], error.code)
-                continue
-            if pair:
-                for pair_path, pair_body in pair:
-                    await self.remember_external(
-                        claim, storage, pair_path, pair_body, package.remote_path
-                    )
-                return self.result(
-                    claim,
-                    "external_verified",
-                    evidence={"audio": audio, "external": evidence, "path": entry["path"]},
-                )
-            await self.remember_external(claim, storage, remote, body, package.remote_path)
-            return self.result(
-                claim,
-                "external_verified",
-                evidence={"audio": audio, "external": evidence, "path": entry["path"]},
-            )
         await self.verify_media(claim, storage, media)
         hash_value = await fingerprint(storage, media, lambda: self.check(claim))
         await self.verify_media(claim, storage, media)
