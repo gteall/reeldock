@@ -131,7 +131,7 @@ function LoginPage({ onLogin }: { onLogin: (value: Session) => void }) {
             进入控制台
           </Button>
         </Form>
-        <Text type="secondary">电影基础刮削 · P2</Text>
+        <Text type="secondary">电影刮削与安全归档 · P3</Text>
       </Card>
     </div>
   )
@@ -168,6 +168,8 @@ function SettingsPage() {
         ...query.data,
         probe_max_mib: (query.data.probe_max_bytes ?? 67108864) / 1048576,
         redirect_hosts_text: query.data.redirect_hosts?.join(', ') ?? '',
+        subtitle_download_hosts_text:
+          query.data.subtitle_download_hosts?.join(', ') ?? 'www.shooter.cn, shooter.cn',
         chinese_languages_text: query.data.chinese_languages?.join(', ') ?? 'zh, cn',
         webdav_password: '',
         tmdb_token: '',
@@ -177,7 +179,13 @@ function SettingsPage() {
   }, [query.data, form])
   const save = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
-      const { redirect_hosts_text, chinese_languages_text, probe_max_mib, ...rest } = values
+      const {
+        redirect_hosts_text,
+        chinese_languages_text,
+        subtitle_download_hosts_text,
+        probe_max_mib,
+        ...rest
+      } = values
       return api<Config>('/config', {
         method: 'PUT',
         body: JSON.stringify({
@@ -189,6 +197,10 @@ function SettingsPage() {
             .map((s) => s.trim())
             .filter(Boolean),
           chinese_languages: String(chinese_languages_text ?? '')
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+          subtitle_download_hosts: String(subtitle_download_hosts_text ?? '')
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean),
@@ -322,11 +334,11 @@ function SettingsPage() {
             />
           </Form.Item>
         </Card>
-        <Card title="后续字幕阶段预算" className="form-card">
+        <Card title="字幕阶段预算" className="form-card">
           <Alert
             type="info"
             showIcon
-            title="基础资产全部远程验证后，才允许进入字幕阶段。P2 不启动探测和字幕请求。"
+            title="基础资产全部远程验证后才处理字幕；TMDB 中文作品跳过探测。"
           />
           <div className="field-pair">
             <Form.Item name="probe_timeout_seconds" label="探测时限（秒）">
@@ -340,6 +352,23 @@ function SettingsPage() {
             name="chinese_languages_text"
             label="TMDB 中文语言集合"
             extra="命中 original_language 时跳过探测；不是实际音轨检测结果。"
+          >
+            <Input />
+          </Form.Item>
+        </Card>
+        <Card title="归档范围确认" className="form-card">
+          <Form.Item name="move_verified" valuePropName="checked">
+            <Checkbox>
+              已在当前输入/输出对应的同一存储驱动范围验证目录 MOVE 和 Overwrite:F 冲突保护
+            </Checkbox>
+          </Form.Item>
+          <Paragraph type="secondary">
+            默认关闭。请先用专用测试目录验证；更换地址、凭证或输入/输出路径后此确认自动失效。存储范围未验证时，任务保留刮削结果并阻塞归档。
+          </Paragraph>
+          <Form.Item
+            name="subtitle_download_hosts_text"
+            label="射手字幕下载主机"
+            extra="精确主机名，逗号分隔；仅允许 HTTPS。"
           >
             <Input />
           </Form.Item>
@@ -382,7 +411,7 @@ function SettingsPage() {
               最终清单验证 <small>检查完整性与源快照</small>
             </li>
             <li>
-              安全归档 <small>P1 保持关闭</small>
+              安全归档 <small>需确认存储 MOVE 能力</small>
             </li>
           </ol>
         </Card>
@@ -430,7 +459,7 @@ function TasksPage() {
         type="info"
         showIcon
         className="page-alert"
-        title="P1 运行连接检查与任务基础；完整刮削将在 P2 / P3 接入，当前不会移动媒体。"
+        title="连接检查为只读；电影页可提交完整刮削任务。未知移动结果只核对，不盲目重发。"
       />
       <Card
         title={
@@ -528,7 +557,7 @@ function TasksPage() {
                   label: 'TMDB 原始语言',
                   children: task.original_language ?? '尚未匹配',
                 },
-                { key: 'probe', label: '实际音轨 / 字幕', children: '未探测（P1）' },
+                { key: 'probe', label: '实际音轨 / 字幕', children: '请在电影详情查看字幕证据' },
                 { key: 'reason', label: '错误原因', children: explain(task.error_code) },
               ]}
             />
@@ -680,8 +709,8 @@ export default function App() {
           ]}
         />
         <div className="sidebar-bottom">
-          <Tag color="cyan">P2 · 电影基础刮削</Tag>
-          <p>归档执行未启用</p>
+          <Tag color="cyan">P3 · 字幕与安全归档</Tag>
+          <p>归档需验证 MOVE 能力</p>
         </div>
       </aside>
       <div className="main">

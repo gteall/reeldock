@@ -40,7 +40,18 @@ const names: Record<string, string> = {
   queued: '排队中',
   running: '执行中',
   blocked: '已阻塞',
-  completed: '基础完成',
+  completed: '任务完成',
+  not_started: '未开始',
+  skipped_tmdb_chinese: '依据 TMDB 中文规则跳过',
+  default_audio_chinese: '默认中文音轨 · 免下载',
+  embedded_zh_hans: '完整内置简体 · 免下载',
+  external_verified: '已有外挂已验证',
+  downloaded_verified: '补充外挂已上传验证',
+  archived: '已归档',
+  sending: '移动中 · 待核对',
+  retry_safe: '请求被拒绝 · 可重试',
+  move_unknown: '移动结果不明',
+  partial_failure: '移动部分失败',
   retry_wait: '等待重试',
   paused: '已暂停',
 }
@@ -69,7 +80,7 @@ function assetState(film: Film, kind: string) {
 function Preview({ asset, close }: { asset: Asset | null; close: () => void }) {
   const nfo = useQuery({
     queryKey: ['nfo', asset?.id, asset?.sha256],
-    enabled: asset?.kind === 'nfo' && !!asset.preview,
+    enabled: ['nfo', 'subtitle', 'manifest'].includes(asset?.kind ?? '') && !!asset?.preview,
     queryFn: async () => {
       const response = await fetch(asset!.preview!, { credentials: 'same-origin' })
       if (!response.ok) throw new Error('预览缓存不可用，请重试资产任务')
@@ -78,7 +89,7 @@ function Preview({ asset, close }: { asset: Asset | null; close: () => void }) {
   })
   return (
     <Modal open={!!asset} onCancel={close} footer={null} width={850} title={asset?.path}>
-      {asset?.kind === 'nfo' ? (
+      {['nfo', 'subtitle', 'manifest'].includes(asset?.kind ?? '') ? (
         nfo.isPending ? (
           <Spin />
         ) : nfo.isError ? (
@@ -128,11 +139,15 @@ export function MoviesPage() {
     mutationFn: (f: Film) =>
       api('/tasks', {
         method: 'POST',
-        body: JSON.stringify({ package_path: f.path, idempotency_key: crypto.randomUUID() }),
+        body: JSON.stringify({
+          kind: 'package_pipeline',
+          package_path: f.path,
+          idempotency_key: crypto.randomUUID(),
+        }),
       }),
     onSuccess: () => {
       refresh()
-      message.success('基础资产任务已排队')
+      message.success('刮削任务已排队；归档需已验证 MOVE 能力')
     },
     onError: error,
   })
@@ -147,18 +162,19 @@ export function MoviesPage() {
       api(`/movies/${id}/match`, { method: 'PUT', body: JSON.stringify({ tmdb_id: tmdbId }) }),
     onSuccess: () => {
       refresh()
-      message.success('选择已保存，请启动基础刮削；现存 NFO 冲突仍会受保护')
+      message.success('选择已保存，请启动刮削并按策略归档；现存 NFO 冲突仍会受保护')
     },
     onError: error,
   })
-  const busy = (f: Film) => ['running', 'queued', 'retry_wait'].includes(f.task_status ?? '')
+  const busy = (f: Film) =>
+    !!f.archive_intent || ['running', 'queued', 'retry_wait'].includes(f.task_status ?? '')
   return (
     <>
       <Alert
         type="info"
         showIcon
-        title="P2 · 基础资产闭环"
-        description="仅扫描文件信息并生成、上传、读回验证基础资产。字幕尚未进入处理阶段，实际音轨未探测，自动归档关闭。"
+        title="P3 · 字幕与安全归档"
+        description="基础必需资产全部上传并读回验证后才处理字幕。TMDB 中文作品跳过探测。归档需要最终清单及已确认的存储 MOVE 能力。"
       />
       <Card
         className="form-card"
@@ -233,6 +249,16 @@ export function MoviesPage() {
               render: (_: unknown, f: Film) => assetState(f, kind),
             })),
             {
+              title: '字幕',
+              key: 'subtitle',
+              render: (_, f) => <Status value={f.subtitle_status} />,
+            },
+            {
+              title: '归档',
+              key: 'archive',
+              render: (_, f) => <Status value={f.archive_status} />,
+            },
+            {
               title: '任务',
               key: 'task',
               render: (_, f) => (f.task_status ? <Status value={f.task_status} /> : '未开始'),
@@ -246,7 +272,7 @@ export function MoviesPage() {
                   disabled={f.scan_status !== 'stable' || busy(f)}
                   onClick={() => start.mutate(f)}
                 >
-                  基础刮削
+                  刮削并按策略归档
                 </Button>
               ),
             },
@@ -274,8 +300,26 @@ export function MoviesPage() {
                   children: film.original_language ?? '未知',
                 },
                 { key: 'base', label: '基础资产', children: <Status value={film.base_status} /> },
-                { key: 'audio', label: '实际音轨', children: '未探测' },
-                { key: 'sub', label: '字幕', children: '尚未进入字幕阶段' },
+                {
+                  key: 'audio',
+                  label: '实际默认音轨',
+                  children:
+                    film.probe_status !== 'probed'
+                      ? '未探测'
+                      : film.probe_evidence.audio
+                        ? `${film.probe_evidence.audio.language}（${film.probe_evidence.audio.selection === 'explicit_default' ? '默认标记' : '首音轨推断'}）`
+                        : '已探测 · 默认音轨待确认',
+                },
+                { key: 'sub', label: '字幕', children: <Status value={film.subtitle_status} /> },
+                { key: 'subreason', label: '字幕原因', children: explain(film.subtitle_reason) },
+                { key: 'archive', label: '归档', children: <Status value={film.archive_status} /> },
+                {
+                  key: 'capability',
+                  label: 'MOVE 能力',
+                  children: film.archive_enabled
+                    ? '管理员已确认当前范围'
+                    : '未验证 · 停留在刮削完成',
+                },
               ]}
             />
             {film.error_code && <Alert type="warning" showIcon title={explain(film.error_code)} />}
@@ -285,7 +329,7 @@ export function MoviesPage() {
                 disabled={film.scan_status !== 'stable' || busy(film)}
                 onClick={() => start.mutate(film)}
               >
-                启动基础刮削
+                启动刮削并按策略归档
               </Button>
               {film.task_id &&
                 ['failed', 'blocked', 'retry_wait'].includes(film.task_status ?? '') && (
@@ -308,6 +352,32 @@ export function MoviesPage() {
                 </Button>
               )}
             </Space>
+            {film.probe_status === 'probed' && (
+              <Card title="实际探测证据">
+                <Typography.Paragraph>
+                  片长 {film.probe_evidence.probe?.duration ?? '未知'} 秒 · 探测读取{' '}
+                  {film.probe_evidence.probe?.bytes_requested ?? '未记录'} 字节
+                </Typography.Paragraph>
+                <Table
+                  size="small"
+                  rowKey="index"
+                  pagination={false}
+                  dataSource={film.probe_evidence.probe?.streams ?? []}
+                  columns={[
+                    { title: '轨道', dataIndex: 'index' },
+                    { title: '类型', dataIndex: 'type' },
+                    { title: '编码', dataIndex: 'codec' },
+                    { title: '语言标签', dataIndex: 'language' },
+                    { title: '标题', dataIndex: 'title' },
+                    {
+                      title: '默认 / forced',
+                      render: (_, stream) =>
+                        `${stream.default ? '默认' : '—'} / ${stream.forced ? 'forced' : '—'}`,
+                    },
+                  ]}
+                />
+              </Card>
+            )}
             <Card title="匹配与人工指定">
               <Form
                 layout="inline"
@@ -356,7 +426,21 @@ export function MoviesPage() {
                 ]}
               />
             </Card>
-            <Card title="基础资产 · 上传后完整读回验证">
+            {film.archive_intent && (
+              <Alert
+                type="info"
+                title={`归档意图 ${film.archive_intent.id}`}
+                description={
+                  <>
+                    <span>{explain(film.archive_intent.error_code)}</span>
+                    {film.archive_intent.failed_paths?.length ? (
+                      <pre>{film.archive_intent.failed_paths.join('\n')}</pre>
+                    ) : null}
+                  </>
+                }
+              />
+            )}
+            <Card title="资产与最终清单 · 上传后完整读回验证">
               <Table<Asset>
                 size="small"
                 rowKey="id"

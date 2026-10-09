@@ -59,6 +59,10 @@ class AppConfig(BaseModel):
     stable_seconds: int = Field(default=600, ge=1, le=86400)
     actor_limit: int = Field(default=20, ge=0, le=500)
     actor_policy: str = Field(default="available_only", pattern=r"^(available_only|strict)$")
+    move_verified: bool = False
+    subtitle_download_hosts: list[str] = Field(
+        default_factory=lambda: ["www.shooter.cn", "shooter.cn"], max_length=20
+    )
 
     _url = field_validator("webdav_url")(validate_url)
     _paths = field_validator("input_path", "output_path")(normalize_path)
@@ -68,7 +72,7 @@ class AppConfig(BaseModel):
     def proxy(cls, value: str | None) -> str | None:
         return validate_url(value) if value else None
 
-    @field_validator("redirect_hosts")
+    @field_validator("redirect_hosts", "subtitle_download_hosts")
     @classmethod
     def hosts(cls, values: list[str]) -> list[str]:
         for value in values:
@@ -177,8 +181,9 @@ class SubtitleCandidate(BaseModel):
 
 
 class ProviderError(Exception):
-    def __init__(self, code: str, *, retryable: bool = False):
+    def __init__(self, code: str, *, retryable: bool = False, details: dict | None = None):
         self.code = code
         self.retryable = retryable
+        self.details = details or {}
         # No server response, URL, credentials, paths or raw exception in public messages.
         super().__init__(code)

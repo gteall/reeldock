@@ -1,4 +1,4 @@
-name: P1 + P2 application
+name: P1 + P2 + P3 application
 on:
   push:
   pull_request:
@@ -13,9 +13,10 @@ jobs:
         with:
           version: '0.9.10'
           python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: uv sync --frozen
-      - run: uv run ruff check backend scripts/p1_*.py scripts/p2_*.py
-      - run: uv run ruff format --check backend scripts/p1_*.py scripts/p2_*.py
+      - run: uv run ruff check backend scripts/p1_*.py scripts/p2_*.py scripts/p3_*.py
+      - run: uv run ruff format --check backend scripts/p1_*.py scripts/p2_*.py scripts/p3_*.py
       - run: uv run pytest -q
       - run: uv build --wheel
   frontend:

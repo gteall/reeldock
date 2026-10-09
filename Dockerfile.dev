@@ -1,4 +1,4 @@
-# P1 development/verification image; no release image or registry publication.
+# P3 development/verification image; no release image or registry publication.
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG PYTHON_IMAGE=python:3.12-slim-bookworm
 FROM ${NODE_IMAGE} AS frontend
@@ -15,6 +15,7 @@ COPY --from=uv /uv /uvx /bin/
 ENV UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy PYTHONUNBUFFERED=1 \
     REELDOCK_DATA_DIR=/data REELDOCK_FRONTEND_DIR=/opt/reeldock/frontend
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project
 COPY backend/ ./backend/

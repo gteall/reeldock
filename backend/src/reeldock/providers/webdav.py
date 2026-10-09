@@ -1,6 +1,6 @@
 """HTTPX WebDAV transport, carrying forward the P0 protocol findings.
 
-P2 permits create-only small NFO/JPEG assets. MOVE remains unavailable.
+Small assets are create-only. MOVE requires an explicitly verified storage scope.
 """
 
 import re
@@ -269,7 +269,13 @@ class WebDAVProvider:
         from pathlib import PurePosixPath
 
         name = PurePosixPath(path)
-        if name.suffix.lower() not in {".nfo", ".jpg"} or len(content) > 20 * 1024 * 1024:
+        allowed = name.suffix.lower() in {".nfo", ".jpg", ".srt", ".ass", ".ssa"}
+        allowed |= (
+            name.suffix == ".json"
+            and name.parent.name == ".reeldock"
+            and name.name.startswith("manifest-v")
+        )
+        if not allowed or len(content) > 20 * 1024 * 1024:
             raise ProviderError("storage_asset_write_rejected")
         # The real OpenList target ignores If-None-Match on PUT. Always reject an
         # existing resource ourselves too. This does not promise atomic exclusion
@@ -296,7 +302,66 @@ class WebDAVProvider:
             raise ProviderError("storage_conflict")
 
     async def move(self, source: str, target: str) -> None:
-        raise ProviderError("archive_disabled_p1")
+        if not self.config.move_verified:
+            raise ProviderError("move_capability_unverified")
+        source, target = normalize_path(source), normalize_path(target)
+        if not source.startswith(self.config.input_path + "/") or not target.startswith(
+            self.config.output_path + "/"
+        ):
+            raise ProviderError("archive_path_outside_verified_scope")
+        try:
+            await self.stat(target)
+        except ProviderError as error:
+            if error.code != "storage_not_found":
+                raise
+        else:
+            raise ProviderError("storage_conflict")
+        async with self.response(
+            "MOVE", source, headers={"Destination": self.url(target), "Overwrite": "F"}
+        ) as response:
+            if response.status_code == 207:
+                body = await self.bounded(response, 2 * 1024 * 1024)
+                try:
+                    root = ElementTree.fromstring(body)
+                    statuses = root.findall(".//" + DAV + "status")
+                    if root.tag != DAV + "multistatus" or not statuses:
+                        raise ValueError()
+                    codes = []
+                    for status in statuses:
+                        match = re.fullmatch(r"HTTP/\S+ (\d{3})(?: .*)?", status.text or "")
+                        if not match:
+                            raise ValueError()
+                        codes.append(int(match[1]))
+                    if any(not 200 <= code < 300 for code in codes):
+                        failed = []
+                        for row in root.findall(DAV + "response"):
+                            row_codes = [
+                                int(re.fullmatch(r"HTTP/\S+ (\d{3})(?: .*)?", s.text or "")[1])
+                                for s in row.findall(".//" + DAV + "status")
+                            ]
+                            if any(not 200 <= code < 300 for code in row_codes):
+                                href = urljoin(self.base, row.findtext(DAV + "href") or "")
+                                prefix = unquote(urlsplit(self.url(source)).path).rstrip("/") + "/"
+                                path = unquote(urlsplit(href).path)
+                                if origin(href) == origin(self.base) and path.startswith(prefix):
+                                    failed.append(
+                                        normalize_path("/" + path[len(prefix) :]).lstrip("/")
+                                    )
+                        raise ProviderError(
+                            "storage_move_partial_failure",
+                            details={
+                                "failed_paths": failed[:100],
+                                "failure_count": sum(not 200 <= c < 300 for c in codes),
+                            },
+                        )
+                except ProviderError:
+                    raise
+                except Exception:
+                    raise ProviderError("storage_invalid_multistatus") from None
+            elif response.status_code in {405, 501}:
+                raise ProviderError("storage_move_unsupported")
+            elif response.status_code not in {200, 201, 204}:
+                raise status_error(response.status_code)
 
     async def capabilities(self) -> dict[str, bool]:
         return {
@@ -306,6 +371,6 @@ class WebDAVProvider:
             "create_only": True,
             "conditional_create_verified": False,
             "concurrent_external_writes_safe": False,
-            "move_enabled": False,
-            "remote_move_verified": False,
+            "move_enabled": self.config.move_verified,
+            "remote_move_verified": self.config.move_verified,
         }

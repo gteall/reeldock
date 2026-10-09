@@ -78,6 +78,17 @@ class SettingsStore:
                 elif not getattr(update, name) or not getattr(update, name).get_secret_value():
                     value[name] = getattr(previous, name) if previous else None
             config = AppConfig.model_validate(value)
+            if previous and any(
+                getattr(config, key) != getattr(previous, key)
+                for key in (
+                    "webdav_url",
+                    "webdav_username",
+                    "webdav_password",
+                    "input_path",
+                    "output_path",
+                )
+            ):
+                config.move_verified = False
             encrypted = self.vault.seal(config)
             if row:
                 row.revision += 1

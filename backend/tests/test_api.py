@@ -146,7 +146,7 @@ def test_migration_repeated_and_schema_matches(foundation):
         assert connection.execute(text("PRAGMA journal_mode")).scalar() == "wal"
         assert compare_metadata(MigrationContext.configure(connection), Base.metadata) == []
         assert (
-            connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+            connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
         )
 
 

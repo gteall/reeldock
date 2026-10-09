@@ -3,6 +3,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
+from pathlib import PurePosixPath
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
@@ -17,11 +18,13 @@ from reeldock.database import Database
 from reeldock.domain import ConfigUpdate, normalize_path
 from reeldock.models import (
     Admin,
+    ArchiveIntent,
     Asset,
     AuthSession,
     Configuration,
     Event,
     LoginLimit,
+    Media,
     MovieRecord,
     Package,
     Task,
@@ -37,6 +40,7 @@ from reeldock.security import (
     passwords,
     random_token,
 )
+from reeldock.subtitles import decode
 from reeldock.worker import Worker
 
 COOKIE = "reeldock_session"
@@ -48,6 +52,7 @@ class Login(BaseModel):
 
 
 class SubmitTask(BaseModel):
+    kind: Literal["movie_base", "package_pipeline"] = "movie_base"
     package_path: str = Field(max_length=2048)
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9:_-]+$")
 
@@ -57,7 +62,12 @@ class ConnectionCheck(BaseModel):
 
 
 def create_app(
-    runtime: Runtime | None = None, *, storage_factory=None, metadata_factory=None
+    runtime: Runtime | None = None,
+    *,
+    storage_factory=None,
+    metadata_factory=None,
+    probe=None,
+    subtitle_factory=None,
 ) -> FastAPI:
     runtime = runtime or Runtime()
 
@@ -82,6 +92,8 @@ def create_app(
             runtime,
             **({"storage_factory": storage_factory} if storage_factory else {}),
             **({"metadata_factory": metadata_factory} if metadata_factory else {}),
+            **({"probe": probe} if probe else {}),
+            **({"subtitle_factory": subtitle_factory} if subtitle_factory else {}),
         )
         app.state.db, app.state.store, app.state.queue = db, store, queue
         app.state.worker = worker
@@ -155,7 +167,9 @@ def create_app(
     def health():
         with app.state.db.sessions.begin() as session:
             session.execute(text("SELECT 1"))
-        return {"status": "ok", "version": __version__, "phase": "P2", "archive_enabled": False}
+            row = session.get(Configuration, 1)
+            enabled = bool(row and app.state.store.vault.open(row.encrypted).move_verified)
+        return {"status": "ok", "version": __version__, "phase": "P3", "archive_enabled": enabled}
 
     @app.get("/api/auth/status")
     def auth_status():
@@ -270,11 +284,24 @@ def create_app(
             raise HTTPException(422, "invalid_package_path") from None
         if not path.startswith(config.input_path + "/"):
             raise HTTPException(422, "package_must_be_below_input_directory")
+        with app.state.db.sessions.begin() as session:
+            package = session.scalar(select(Package).where(Package.remote_path == path))
+            repeated = session.scalar(
+                select(Task.id).where(Task.idempotency_key == body.idempotency_key)
+            )
+            if (
+                package
+                and not repeated
+                and session.scalar(
+                    select(ArchiveIntent.id).where(ArchiveIntent.package_id == package.id)
+                )
+            ):
+                raise HTTPException(409, "archive_existing_intent_requires_recovery")
         try:
-            task_id = app.state.queue.submit("movie_base", path, body.idempotency_key, revision)
+            task_id = app.state.queue.submit(body.kind, path, body.idempotency_key, revision)
         except ValueError:
             raise HTTPException(409, "idempotency_key_conflict") from None
-        return {"task_id": task_id, "implementation": "movie_base_only"}
+        return {"task_id": task_id, "implementation": body.kind}
 
     @app.post("/api/scan", status_code=202, dependencies=[Depends(mutation)])
     def scan(body: ConnectionCheck):
@@ -300,6 +327,20 @@ def create_app(
             .order_by(Task.created_at.desc())
             .limit(1)
         )
+        media = session.scalar(select(Media).where(Media.package_id == package.id))
+        intent = session.scalar(
+            select(ArchiveIntent)
+            .where(ArchiveIntent.package_id == package.id)
+            .order_by(ArchiveIntent.created_at.desc())
+            .limit(1)
+        )
+        config_row = session.get(Configuration, 1)
+        config = app.state.store.vault.open(config_row.encrypted) if config_row else None
+        current_probe = (
+            media
+            and media.probe_evidence.get("context_version") == package.context_version
+            and package.subtitle_status != "skipped_tmdb_chinese"
+        )
         return {
             "id": package.id,
             "path": package.remote_path,
@@ -315,9 +356,21 @@ def create_app(
             "original_language": package.original_language,
             "candidates": row.candidates,
             "base_status": package.base_status,
-            "subtitle_status": "not_entered_p2",
-            "probe_status": "not_started",
-            "archive_enabled": False,
+            "subtitle_status": package.subtitle_status,
+            "subtitle_reason": package.subtitle_reason,
+            "subtitle_evidence": package.subtitle_evidence,
+            "probe_status": media.probe_status if current_probe else "not_started",
+            "probe_evidence": media.probe_evidence if current_probe else {},
+            "archive_status": package.archive_status,
+            "archive_intent": {
+                "id": intent.id,
+                "status": intent.status,
+                "error_code": intent.error_code,
+                "failed_paths": intent.snapshot.get("move_failure", {}).get("failed_paths", []),
+            }
+            if intent
+            else None,
+            "archive_enabled": bool(config and config.move_verified),
             "error_code": row.error_code or (latest.error_code if latest else None),
             "task_id": latest.id if latest else None,
             "task_status": latest.status if latest else None,
@@ -343,7 +396,13 @@ def create_app(
                     "managed": a.managed,
                     "sha256": a.sha256,
                     "remote_verified_at": a.remote_verified_at,
-                    "preview": "/api/assets/" + a.id + "/preview" if a.cache_key else None,
+                    "preview": "/api/assets/" + a.id + "/preview"
+                    if a.cache_key
+                    and (
+                        a.kind != "subtitle"
+                        or PurePosixPath(a.relative_path).suffix.lower() in {".srt", ".ass", ".ssa"}
+                    )
+                    else None,
                 }
                 for a in assets
             ],
@@ -376,6 +435,10 @@ def create_app(
             row, package = session.get(MovieRecord, package_id), session.get(Package, package_id)
             if not row or not package:
                 raise HTTPException(404, "movie_not_found")
+            if session.scalar(
+                select(ArchiveIntent.id).where(ArchiveIntent.package_id == package.id)
+            ):
+                raise HTTPException(409, "archive_existing_intent_requires_recovery")
             if package.lease_owner and (package.lease_until or 0) > time.time():
                 raise HTTPException(409, "package_busy_pause_first")
             if body.tmdb_id != package.tmdb_id:
@@ -390,14 +453,31 @@ def create_app(
     def preview(asset_id: str):
         with app.state.db.sessions.begin() as session:
             asset = session.get(Asset, asset_id)
-            if not asset or asset.kind not in {"nfo", "poster", "fanart", "actor"}:
+            if not asset or asset.kind not in {
+                "nfo",
+                "poster",
+                "fanart",
+                "actor",
+                "subtitle",
+                "manifest",
+            }:
                 raise HTTPException(404, "preview_not_available")
             body = app.state.worker.movies.cache.get(asset.cache_key)
             if body is None:
                 raise HTTPException(404, "preview_cache_missing_retry")
+            if asset.kind == "subtitle":
+                if PurePosixPath(asset.relative_path).suffix.lower() not in {
+                    ".srt",
+                    ".ass",
+                    ".ssa",
+                }:
+                    raise HTTPException(404, "preview_not_available")
+                body = decode(body).encode("utf-8")
             return Response(
                 body,
-                media_type="text/plain; charset=utf-8" if asset.kind == "nfo" else "image/jpeg",
+                media_type="text/plain; charset=utf-8"
+                if asset.kind in {"nfo", "subtitle", "manifest"}
+                else "image/jpeg",
                 headers={"Content-Security-Policy": "default-src 'none'; sandbox"},
             )
 

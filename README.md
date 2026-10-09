@@ -2,7 +2,7 @@
 
 面向 NAS 的影视刮削与归档工具：从 OpenList 提供的 WebDAV 待刮削目录发现影视文件，通过 TMDB 获取元数据，将 NFO、海报、背景图、演员头像和所需字幕写回 WebDAV，全部必需项验证通过后移动整个媒体目录。
 
-**当前状态：P2 电影基础刮削已实现。** 可扫描并等待稳定、匹配 / 手动指定 TMDB ID、生成 Kodi NFO / 海报 / 背景 / `.actors`，上传后完整读回验证；支持现存资产保护、预览及局部重试。字幕、媒体探测、最终清单和自动归档尚未启用。真实 TMDB 与专用 WebDAV 小资产上传已验证；真实电影包与本次产物的 Kodi / 飞牛验收待补。详见 [开发进度](docs/progress.md)、[P2 使用与验证](docs/p2-tools.md)及[兼容性记录](docs/compatibility.md)。
+**当前状态：P3 字幕与安全归档已实现。** 基础资产全部上传并完整读回后，再按 original_language 判断字幕策略；zh/cn 跳过一切探测与视频读取。明确非中文可探测、复用内置 / 外挂或通过射手补齐，随后生成最终清单并持久化安全 MOVE 意图。支持局部重试与移动中断核对恢复；自动归档默认关闭，需确认存储范围能力。测试及真实环境边界见 [开发进度](docs/progress.md)、[P3 指南](docs/p3-tools.md)及[兼容性记录](docs/compatibility.md)。
 
 本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
 
@@ -55,3 +55,5 @@
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 本仓库不包含 TMDB 素材、用户片源、第三方下载字幕或任何访问凭证；P0 测试只使用代码生成的原创媒体与字幕。
+
+P3 已接入基础门禁后的字幕策略、最终清单与安全归档，使用与复验见 [P3 指南](docs/p3-tools.md)。自动归档默认关闭，需确认对应存储范围的 MOVE 能力；真实测试仅操作专用目录。

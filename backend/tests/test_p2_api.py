@@ -65,7 +65,7 @@ def test_p2_movie_api_match_preview_and_auth(runtime, config_body):
         task = client.get("/api/tasks/" + result.json()["task_id"]).json()
         assert task["status"] == "completed", task
         movie = client.get(f"/api/movies/{movie['id']}").json()
-        assert movie["original_language"] == "en" and movie["subtitle_status"] == "not_entered_p2"
+        assert movie["original_language"] == "en" and movie["subtitle_status"] == "pending"
         nfo = next(a for a in movie["assets"] if a["kind"] == "nfo")
         preview = client.get(nfo["preview"])
         assert preview.status_code == 200 and "text/plain" in preview.headers["content-type"]
@@ -89,7 +89,6 @@ def test_upgrade_existing_p1_configuration_and_tasks(tmp_path, config_body):
     from reeldock import migrations
     from reeldock.database import Database
     from reeldock.models import Configuration, Task
-    from reeldock.queue import Queue
     from reeldock.security import SettingsStore, Vault
 
     db = Database(tmp_path / "upgrade.sqlite3")
@@ -107,12 +106,27 @@ def test_upgrade_existing_p1_configuration_and_tasks(tmp_path, config_body):
                 encrypted=vault.cipher.encrypt(json.dumps(config_body).encode()).decode(),
             )
         )
-    task_id = Queue(db).submit("connection_check", ":connection", "p1-existing", 1)
+    # Seed the old schema through SQL, not the current ORM's added P3 columns.
+    with db.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "INSERT INTO packages (id, remote_path, kind, source_snapshot, context_version, "
+            "policy_version, base_required, base_status, subtitle_status, lease_generation) "
+            "VALUES ('old-package', ':connection', 'connection', '{}', 1, 1, '[]', "
+            "'pending', 'pending', 0)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO tasks (id, package_id, kind, idempotency_key, payload_hash, "
+            "context_version, config_revision, status, stage, attempts, max_attempts, "
+            "retry_at, pause_requested, created_at, updated_at) VALUES ('old-task', "
+            "'old-package', 'connection_check', 'p1-existing', 'hash', 1, 1, 'queued', "
+            "'connection_check', 0, 3, 0, 0, 0, 0)"
+        )
+    task_id = "old-task"
     db.migrate()
     db.migrate()
     config, revision = SettingsStore(db, vault).load()
     assert revision == 1 and config.stable_seconds == 600 and config.actor_limit == 20
     with db.sessions.begin() as session:
         assert session.get(Task, task_id).status == "queued"
-        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
     db.close()

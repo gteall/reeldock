@@ -58,6 +58,8 @@ class Package(Base):
     subtitle_reason: Mapped[str | None] = mapped_column(String(80))
     subtitle_version: Mapped[int | None] = mapped_column(Integer)
     manifest_version: Mapped[int | None] = mapped_column(Integer)
+    subtitle_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
+    archive_status: Mapped[str] = mapped_column(String(40), default="not_started")
     lease_owner: Mapped[str | None] = mapped_column(String(32))
     lease_until: Mapped[float | None] = mapped_column(Float)
     lease_generation: Mapped[int] = mapped_column(default=0)

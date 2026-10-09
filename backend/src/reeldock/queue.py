@@ -79,6 +79,24 @@ def gate(session, package: Package, stage: str):
             or package.subtitle_version != package.context_version
         ):
             raise ProviderError("subtitle_policy_not_satisfied")
+        if package.subtitle_status in {"external_verified", "downloaded_verified"}:
+            subtitles = list(
+                session.scalars(
+                    select(Asset).where(
+                        Asset.package_id == package.id,
+                        Asset.kind == "subtitle",
+                        Asset.required.is_(True),
+                    )
+                )
+            )
+            if not subtitles or any(
+                a.status != "remote_verified"
+                or a.verified_version != package.context_version
+                or not a.sha256
+                or a.remote_verified_at is None
+                for a in subtitles
+            ):
+                raise ProviderError("subtitle_policy_not_satisfied")
     if stage == Stage.ARCHIVE:
         manifests = list(
             session.scalars(
@@ -106,6 +124,8 @@ def invalidate_package(package: Package, reason="context_changed"):
     package.base_status = "pending"
     package.subtitle_status, package.subtitle_reason = "pending", reason
     package.subtitle_version = package.manifest_version = None
+    package.subtitle_evidence = {}
+    package.archive_status = "not_started"
 
 
 def revise_package(session, package: Package, **changes):

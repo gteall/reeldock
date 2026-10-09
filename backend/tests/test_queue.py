@@ -162,7 +162,10 @@ async def test_order_retry_reuses_completed_base_and_archive_is_disabled(foundat
             raise ProviderError("subtitle_network_error", retryable=True)
         with db.sessions.begin() as session:
             item = session.get(Package, package_id)
-            item.subtitle_status, item.subtitle_version = "external_verified", item.context_version
+            item.subtitle_status, item.subtitle_version = (
+                "default_audio_chinese",
+                item.context_version,
+            )
 
     async def manifest(claim):
         calls.append("manifest")
@@ -205,7 +208,7 @@ async def test_order_retry_reuses_completed_base_and_archive_is_disabled(foundat
     assert calls == ["match", "base", "subtitle", "subtitle", "manifest"]
     with db.sessions.begin() as session:
         task = session.get(Task, task_id)
-        assert task.status == "blocked" and task.error_code == "archive_disabled_p1"
+        assert task.status == "blocked" and task.error_code == "move_capability_unverified"
 
 
 @pytest.mark.parametrize(

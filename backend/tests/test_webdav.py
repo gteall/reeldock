@@ -190,7 +190,7 @@ async def test_media_writes_and_archive_stay_disabled(config_body):
     async with provider(config_body, forbidden) as storage:
         with pytest.raises(ProviderError, match="storage_asset_write_rejected"):
             await storage.put("/file", b"data")
-        with pytest.raises(ProviderError, match="archive_disabled_p1"):
+        with pytest.raises(ProviderError, match="move_capability_unverified"):
             await storage.move("/source", "/target")
         assert not (await storage.capabilities())["move_enabled"]
 

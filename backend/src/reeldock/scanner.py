@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from reeldock.domain import ProviderError
 from reeldock.matching import EPISODE_PATTERN, TEMP_PATTERN, VIDEO_EXTENSIONS, parse_name
-from reeldock.models import Asset, Media, MovieRecord, Package
+from reeldock.models import ArchiveIntent, Asset, Media, MovieRecord, Package
 from reeldock.queue import revise_package
 
 
@@ -97,6 +97,12 @@ class Scanner:
                     session.add(package)
                     session.flush()
                 seen.add(package.id)
+                if session.scalar(
+                    select(ArchiveIntent.id).where(
+                        ArchiveIntent.package_id == package.id, ArchiveIntent.status != "archived"
+                    )
+                ):
+                    continue  # Do not invalidate the historical context needed to reconcile MOVE.
                 record = session.get(MovieRecord, package.id)
                 snapshot = source_snapshot(entries)
                 # Config identity forms part of the source context; never reuse another
@@ -153,7 +159,11 @@ class Scanner:
                     select(Asset).where(Asset.package_id == package.id)
                 ):
                     full_path = path + "/" + existing.relative_path
-                    if existing.status == "remote_verified" and full_path not in observed_paths:
+                    if (
+                        existing.kind in {"nfo", "poster", "fanart", "actor"}
+                        and existing.status == "remote_verified"
+                        and full_path not in observed_paths
+                    ):
                         existing.status, package.base_status = "pending", "pending"
                 for e in observed:
                     name = str(PurePosixPath(e.path).relative_to(path))
@@ -198,6 +208,12 @@ class Scanner:
                 if (
                     package.remote_path.startswith(config.input_path + "/")
                     and package.id not in seen
+                    and not session.scalar(
+                        select(ArchiveIntent.id).where(
+                            ArchiveIntent.package_id == package.id,
+                            ArchiveIntent.status != "archived",
+                        )
+                    )
                 ):
                     if record.scan_status != "missing":
                         revise_package(session, package, source_snapshot={})

@@ -9,6 +9,28 @@ export class ApiError extends Error {
 }
 
 const messages: Record<string, string> = {
+  tmdb_original_language_unknown: 'TMDB 原始语言缺失或无法识别，需要人工确认',
+  tmdb_original_language_chinese: '依据 TMDB 中文规则跳过；实际音轨未探测',
+  default_audio_unknown: '无法确认实际默认音轨语言，需要人工确认',
+  default_audio_ambiguous: '默认音轨或解说轨存在冲突，需要人工确认',
+  embedded_subtitle_ambiguous: '内置字幕繁简标签冲突，需要人工确认',
+  subtitle_no_match: '射手没有匹配字幕，请人工补齐后重试',
+  subtitle_not_text: '字幕为空、编码异常或返回了网页',
+  subtitle_no_dialogue: '字幕没有可解析的有效对白',
+  subtitle_timeline_mismatch: '字幕时间轴与实际片长明显不符',
+  subtitle_pair_incomplete: 'IDX/SUB 字幕必须成对存在',
+  subtitle_invalid_vobsub: 'IDX/SUB 字幕结构或内容校验失败',
+  probe_timeout: '媒体探测超时，未下载整部视频',
+  probe_byte_budget: '媒体探测超出读取预算，已停止',
+  storage_range_ignored: '存储忽略 Range，已停止读取',
+  move_capability_unverified: '尚未确认当前路径范围的 MOVE 能力，刮削产物已保留',
+  archive_target_conflict: '目标已有同名目录，未覆盖',
+  source_changed_before_archive: '包内文件在生成清单后发生变化，已停止归档',
+  storage_move_partial_failure: 'MOVE 返回子项失败，请核对两侧，未删除源',
+  move_unknown: '移动结果不明；重试只核对状态，不盲目重发或删除',
+  move_in_flight_unknown: '源完整但无法证明先前 MOVE 已停止，需人工核对',
+  archive_existing_intent_requires_recovery: '已有归档意图，请恢复原任务，避免新任务改变证据',
+
   tmdb_credentials_required: '请先保存 TMDB 凭证',
   tmdb_timeout: 'TMDB 连接超时，请检查网络或代理',
   tmdb_not_found: 'TMDB 电影 ID 不存在，请核对电影与剧集类型',
@@ -107,6 +129,8 @@ export interface Config {
   stable_seconds?: number
   actor_limit?: number
   actor_policy?: string
+  move_verified?: boolean
+  subtitle_download_hosts?: string[]
   policy_version?: number
 }
 export interface Task {
@@ -151,6 +175,34 @@ export interface Asset {
   preview: string | null
 }
 export interface Film {
+  subtitle_status: string
+  subtitle_reason: string | null
+  subtitle_evidence: Record<string, unknown>
+  probe_status: string
+  probe_evidence: {
+    audio?: { language: string; selection: string }
+    probe?: {
+      bytes_requested?: number
+      duration?: number | null
+      streams?: {
+        index: number
+        type: string
+        codec: string
+        language?: string
+        title?: string
+        default?: number
+        forced?: number
+      }[]
+    }
+  }
+  archive_status: string
+  archive_enabled: boolean
+  archive_intent: {
+    id: string
+    status: string
+    error_code: string | null
+    failed_paths?: string[]
+  } | null
   id: string
   path: string
   title: string
