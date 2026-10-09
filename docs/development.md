@@ -46,7 +46,7 @@ pnpm dev
 - `REELDOCK_SECURE_COOKIE=false` 适合本机 HTTP；HTTPS 访问时改为 `true`。
 - `REELDOCK_WORKER_ENABLED`、`REELDOCK_WORKER_CONCURRENCY`、`REELDOCK_LEASE_SECONDS` 控制 Worker。租约默认 30 秒，心跳每租约时长的三分之一续租。
 
-设置页可保存 WebDAV 地址、账号、密码、输入 / 输出目录、TMDB 凭证、代理、精确下载重定向主机白名单和未来探测预算。密码和 TMDB 凭证从不回显，留空保留原值，勾选“清除”才删除。保存带配置版本，旧页面覆盖会收到 409。
+设置页可保存 WebDAV 地址、账号、密码、输入 / 输出目录、TMDB 凭证、代理、可选下载重定向主机限制和探测预算。密码和 TMDB 凭证从不回显，留空保留原值，勾选“清除”才删除。保存带配置版本，旧页面覆盖会收到 409。
 
 路径使用相对于 WebDAV 端点的已解码绝对路径，例如 `/incoming`；WebDAV 地址通常包含 `/dav/`。输入 / 输出不得相同、互为上下级或为根目录；路径中的 `.`、`..`、反斜杠及编码后的穿越会被拒绝。Unicode、空格、`#`、字面量 `%` 支持一次正确编码。
 
@@ -76,7 +76,7 @@ uv run python scripts/p1_check_webdav.py --env-file .env.p0
 
 此工具只列出 P0 扫描目录及专用测试父目录，输出安全 JSON 计数，不把 P0 配置复制进应用数据库。退出码 0 通过、1 失败、2 未验证。P1 实测这两个目录均通过，媒体内容读取、写入和 MOVE 均为零。
 
-HTTPX 不隐式使用系统代理，只使用保存的代理配置。PROPFIND 不跟随重定向；GET / HEAD 最多跟随 5 次，跨源要求精确主机白名单，拒绝 HTTPS 降级，移除 Authorization、Cookie 和 DAV 条件头。可选属性 404 允许，资源 / 权限失败不隐藏。Range 必须是精确的 206 / Content-Range；忽略 Range 的 200 在读取响应体前拒绝。Range 方法暂未连接到任何产品媒体操作。
+HTTPX 不隐式使用系统代理，只使用保存的代理配置。产品默认信任管理员配置的 WebDAV 服务返回的 GET / HEAD 下载位置，最多跟随 5 次；“下载重定向主机限制”留空即可使用 OpenList / 115 的 302 直链，不需要提前知道下载域名，也不要求 OpenList 改为中转。填写非空列表后才按精确主机名限制跨源跳转。跨源移除 Authorization、Cookie、Referer 和 DAV 条件 / 锁头，返回原服务也不会恢复凭证；拒绝 HTTPS 降级、含账号密码 / 非 HTTP(S) 的跳转。PROPFIND、PUT、MKCOL、MOVE 不跟随跳转。可选属性 404 允许，资源 / 权限失败不隐藏。Range 必须是精确的 206 / Content-Range；忽略 Range 的 200 在读取响应体前拒绝，不能降级为整视频下载。字幕阶段的基础门禁保持不变。
 
 ## 开发容器
 

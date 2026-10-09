@@ -82,6 +82,11 @@ class WebDAVProvider:
                         "authorization",
                         "cookie",
                         "proxy-authorization",
+                        "referer",
+                        "origin",
+                        "destination",
+                        "if",
+                        "lock-token",
                         "if-match",
                         "if-range",
                         "if-unmodified-since",
@@ -102,18 +107,29 @@ class WebDAVProvider:
                 await response.aclose()
                 if method not in {"GET", "HEAD"} or not location:
                     raise ProviderError("storage_redirect_rejected")
-                next_url = urljoin(target, location)
-                parsed = urlsplit(next_url)
+                try:
+                    next_url = urljoin(target, location)
+                    parsed = urlsplit(next_url)
+                    next_origin = origin(next_url)
+                except ValueError:
+                    raise ProviderError("storage_redirect_rejected") from None
                 if (
                     parsed.scheme not in {"http", "https"}
+                    or not parsed.hostname
                     or parsed.username
                     or parsed.password
                     or parsed.fragment
                     or (urlsplit(target).scheme == "https" and parsed.scheme != "https")
                 ):
                     raise ProviderError("storage_redirect_rejected")
-                if origin(next_url) != origin(self.base):
-                    if parsed.hostname not in self.config.redirect_hosts:
+                if next_origin != origin(self.base):
+                    # The configured WebDAV server supplies its download locations.
+                    # Dynamic CDN hosts need no manual list. A nonempty list is an
+                    # optional restriction, not a requirement for OpenList 302 mode.
+                    if (
+                        self.config.redirect_hosts
+                        and parsed.hostname not in self.config.redirect_hosts
+                    ):
                         raise ProviderError("storage_redirect_host_denied")
                     crossed_origin = True
                 target = next_url

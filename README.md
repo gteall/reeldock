@@ -6,6 +6,8 @@
 
 本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
 
+OpenList 可保持 **302 直链模式**。“下载重定向主机限制”默认留空，自动跟随服务返回的下载地址，无需填写 115 下载域名；填写列表才限制跳转主机。跨域不会携带 WebDAV 账号密码或 Cookie。
+
 ## 产品约定
 
 - 名称：ReelDock，中文名：影坞。

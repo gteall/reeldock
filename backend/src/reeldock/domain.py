@@ -50,6 +50,7 @@ class AppConfig(BaseModel):
     tmdb_token: SecretStr | None = None
     proxy_url: str | None = None
     tmdb_proxy_url: str | None = None
+    # Empty follows the configured WebDAV's download redirects; nonempty restricts hosts.
     redirect_hosts: list[str] = Field(default_factory=list, max_length=20)
     http_timeout_seconds: float = Field(default=15, ge=1, le=120)
     probe_timeout_seconds: int = Field(default=45, ge=1, le=300)

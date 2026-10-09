@@ -308,8 +308,8 @@ function SettingsPage() {
           </Form.Item>
           <Form.Item
             name="redirect_hosts_text"
-            label="下载重定向主机白名单"
-            extra="精确小写主机名，以逗号分隔；不接受通配符。"
+            label="下载重定向主机限制（可选）"
+            extra="留空自动跟随 OpenList 的 302 直链，无需知道 115 下载域名。填写后仅允许列表中的精确小写主机名，以逗号分隔；跨域不携带 WebDAV 账号密码。"
           >
             <Input placeholder="cdn.example.com" />
           </Form.Item>

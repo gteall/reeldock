@@ -116,6 +116,138 @@ async def test_cross_origin_strips_auth_cookies_and_dav_conditions(config_body):
     assert len(requests) == 2
 
 
+@pytest.mark.parametrize("ranged", [False, True])
+async def test_empty_host_restriction_follows_dynamic_cdn_chain_without_credentials(
+    config_body, ranged
+):
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        if len(calls) == 1:
+            assert request.headers["authorization"].startswith("Basic ")
+            return httpx.Response(
+                302,
+                headers={
+                    "Location": "https://download-1.example/file?sign=private",
+                    "Set-Cookie": "private=cookie; Domain=.example",
+                },
+            )
+        for header in (
+            "authorization",
+            "cookie",
+            "proxy-authorization",
+            "referer",
+            "origin",
+            "destination",
+            "if",
+            "lock-token",
+            "if-match",
+            "if-range",
+            "if-unmodified-since",
+        ):
+            assert header not in request.headers
+        if ranged:
+            assert request.headers["range"] == "bytes=0-3"
+        if len(calls) == 2:
+            return httpx.Response(307, headers={"Location": "https://download-2.example/file"})
+        if len(calls) == 3:
+            # Returning to DAV must not resurrect credentials after leaving its origin.
+            return httpx.Response(302, headers={"Location": "https://dav.example/download"})
+        return httpx.Response(
+            206 if ranged else 200,
+            content=b"abcd",
+            headers={"Content-Range": "bytes 0-3/12"} if ranged else {},
+        )
+
+    config = AppConfig(**config_body)
+    assert config.redirect_hosts == []
+    async with WebDAVProvider(config, transport=httpx.MockTransport(handle)) as storage:
+        if ranged:
+            async with storage.response(
+                "GET",
+                "/incoming/movie.mkv",
+                headers={
+                    "Range": "bytes=0-3",
+                    "Cookie": "private=manual-cookie",
+                    "Proxy-Authorization": "private-proxy",
+                    "Referer": "https://dav.example/private-path",
+                    "Origin": "https://dav.example",
+                    "Destination": "https://dav.example/private-path",
+                    "If": "private-lock",
+                    "Lock-Token": "private-lock",
+                    "If-Match": "dav-etag",
+                    "If-Range": "dav-etag",
+                    "If-Unmodified-Since": "private-date",
+                },
+            ) as response:
+                assert await storage.bounded(response, 4) == b"abcd"
+        else:
+            assert await storage.read_small("/incoming/poster.jpg", 4) == b"abcd"
+    assert len(calls) == 4
+
+
+@pytest.mark.parametrize("method", ["PROPFIND", "PUT", "MKCOL", "MOVE"])
+async def test_automatic_download_redirects_never_follow_dav_mutations(config_body, method):
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(302, headers={"Location": "https://download.example/file"})
+
+    async with WebDAVProvider(
+        AppConfig(**config_body), transport=httpx.MockTransport(handle)
+    ) as storage:
+        with pytest.raises(ProviderError, match="storage_redirect_rejected"):
+            async with storage.response(method, "/incoming/poster.jpg"):
+                pytest.fail("DAV redirects must not be followed")
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "location,code",
+    [
+        ("http://download.example/file", "storage_redirect_rejected"),
+        ("https://user:secret@download.example/file", "storage_redirect_rejected"),
+        ("ftp://download.example/file", "storage_redirect_rejected"),
+        # HTTPX rejects malformed Location headers before exposing the response.
+        ("https://download.example:invalid/file", "storage_network_error"),
+        ("https://[invalid]/file", "storage_network_error"),
+        ("https://download.example/file#fragment", "storage_redirect_rejected"),
+    ],
+)
+async def test_empty_host_restriction_keeps_redirect_url_guards(config_body, location, code):
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(302, headers={"Location": location})
+
+    async with WebDAVProvider(
+        AppConfig(**config_body),
+        transport=httpx.MockTransport(handle),
+    ) as storage:
+        with pytest.raises(ProviderError, match=code) as error:
+            await storage.read_small("/incoming/poster.jpg", 4)
+        assert "secret" not in str(error.value)
+    assert len(calls) == 1
+
+
+async def test_empty_host_restriction_still_limits_redirect_chain(config_body):
+    calls = []
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(302, headers={"Location": "https://download.example/file"})
+
+    async with WebDAVProvider(
+        AppConfig(**config_body), transport=httpx.MockTransport(handle)
+    ) as storage:
+        with pytest.raises(ProviderError, match="storage_redirect_limit"):
+            await storage.read_small("/incoming/poster.jpg", 4)
+    assert len(calls) == 6
+
+
 @pytest.mark.parametrize(
     "location,code",
     [
@@ -144,6 +276,19 @@ class Unreadable(httpx.AsyncByteStream):
     async def __aiter__(self):
         pytest.fail("Response body must not be read")
         yield b""
+
+
+async def test_automatic_cdn_redirect_does_not_allow_full_video_fallback(config_body):
+    def handle(request):
+        if request.url.host == "dav.example":
+            return httpx.Response(302, headers={"Location": "https://download.example/file"})
+        return httpx.Response(200, stream=Unreadable())
+
+    async with WebDAVProvider(
+        AppConfig(**config_body), transport=httpx.MockTransport(handle)
+    ) as storage:
+        with pytest.raises(ProviderError, match="storage_range_ignored"):
+            await storage.read_range("/incoming/movie.mkv", 0, 4, 12)
 
 
 @pytest.mark.parametrize(

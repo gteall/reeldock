@@ -194,3 +194,13 @@ P3 最终真实 WebDAV 复验：`scripts/p3_verify.py webdav --output reports/p3
 P4 真实专用 WebDAV 恢复：`scripts/p4_verify.py reconcile --journal reports/p4-runs/.reeldock-p4-<实际ID> --output reports/p4-webdav-recovered.json` **passed**，archive / intent 均为 archived。复用原意图，完整核对目标必需项和增强图；工具禁止远程 PUT / MKCOL / MOVE / Range，恢复期间远程写入 **0**、视频读取 **0**。首轮失败与只读恢复报告分别保留，没有改写历史 manifest，没有操作用户实际片源。
 
 最终检查：`uv run pytest -q` **226 项通过**；`scripts/p4_verify.py mock` **45 项 P4 用例通过**；P0 `unittest discover -v` **44 项通过**；前端 **8 项测试通过**，格式 / TypeScript / Vite 构建通过。最终 wheel 与开发镜像构建通过，容器内 P4 + 真实自建 FFprobe 网关 **49 项通过**；独立容器 / 卷重启烟测 **9 项通过**。敏感内容核对区分通用 admin / 公开射手接口 / 回环代理示例，实际凭证、NAS URL 和媒体 / 测试路径零匹配；env、reports、素材、字幕、DB 不纳入提交。没有正式发布、没有飞牛生产部署，下一入口为 P5 提示词。
+
+### P4 使用修正：OpenList / 115 的 302 直链（2026-10-09）
+
+真实使用中，默认空主机白名单阻止了 OpenList 的跨域资产读回。产品现将 `redirect_hosts` 作为可选限制：留空自动跟随管理员配置的 WebDAV 返回的 GET / HEAD 下载位置；非空才限制精确主机名。无需维护 115 下载域名，不改 OpenList 302 模式，不切换中转。已有空列表配置立即适用，配置字段和数据库无需迁移；需重启本机后端加载新代码。
+
+跨域剥离账号密码、Cookie、Referer / Origin 及 DAV 条件 / 锁头；链路返回原服务也不恢复凭证。HTTPS 降级、含账号密码 / 非 HTTP(S) URL、过多跳转、DAV 写入跳转仍拒绝。Range 的 206 / Content-Range、字节预算及整包基础门禁保持。界面将主机限制标为可选，并将 HTTP 405 改为“请求方法被拒绝”，不再一概声称 WebDAV 端点填错。
+
+新增 **14 项**下载链路回归：动态多主机、凭证 / Cookie / 条件头剥离、返回源站不恢复凭证、手动限制、非法跳转、跳转上限、禁止 DAV 方法跳转、Range 返回 200 不消费视频正文。`pytest -q` **240 项通过**；Ruff 静态 / 格式通过；前端 **8 项测试**、格式、TypeScript / Vite 构建通过。旧 P0 验证工具仍保留独立的精确白名单规则。
+
+只读真实复查：使用产品已有配置（主机列表为空）读取一个之前由影坞生成的 NFO，实际 `302 → 200`，**17,756 B**，与已记录 SHA-256 一致；客户端观察到跨域请求无 Authorization / Cookie。报告 `reports/p4-redirect-readback.json` 本地忽略；远程写入 **0**、视频读取 **0**。仅证明这次小资产读回，不代表完整媒体字幕 / 归档或全部 405 / 超时原因已解决。未更改用户配置、未重启正在运行的用户应用、未更改 OpenList 设置。
