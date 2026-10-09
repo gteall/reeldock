@@ -2,7 +2,11 @@
 
 面向 NAS 的影视刮削与归档工具：从 OpenList 提供的 WebDAV 待刮削目录发现影视文件，通过 TMDB 获取元数据，将 NFO、海报、背景图、演员头像和所需字幕写回 WebDAV，全部必需项验证通过后移动整个媒体目录。
 
-**当前状态：P0 验证工具已实现，部分实机验收待补齐。** 已在本机连接真实 WebDAV 完成小文件读回、Range 指纹、目录 MOVE 与媒体样本探测，完成射手公开样本验证及 Kodi 基础 NFO / 本地图片导入和刷新。Kodi 真正断网、大型实际片源、NAS 故障注入及飞牛 Docker 未验证；尚无产品应用或 Docker 镜像。详见 [兼容性记录](docs/compatibility.md)。
+**当前状态：P4 电视剧与媒体工作台已实现。** 电影与剧集共用上传、字幕及安全归档组件；整包基础必需资产验证后才逐集处理字幕，中文剧全部零探测。支持季集人工修正、逐集 NFO、共享图片与 `.actors`、独立增强图、失败集恢复、目录树、批量操作及 SSE 重连。目标已有剧目录时拒绝合并 / 覆盖。自动归档默认关闭，需确认存储范围能力。证据与边界见 [开发进度](docs/progress.md)、[P4 指南](docs/p4-tools.md)及[兼容性记录](docs/compatibility.md)。
+
+本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
+
+OpenList 可保持 **302 直链模式**。“下载重定向主机限制”默认留空，自动跟随服务返回的下载地址，无需填写 115 下载域名；填写列表才限制跳转主机。跨域不会携带 WebDAV 账号密码或 Cookie。
 
 ## 产品约定
 
@@ -34,6 +38,10 @@
 ## 设计与开发
 
 - [P0 工具运行说明](docs/p0-tools.md)
+- [本机开发与容器启动](docs/development.md)
+- [P2 电影刮削与验证](docs/p2-tools.md)
+- [P3 字幕与安全归档](docs/p3-tools.md)
+- [P4 剧集与批量工作台](docs/p4-tools.md)
 - [兼容性与实测边界](docs/compatibility.md)
 - [开发进度与交接](docs/progress.md)
 - [总体架构与业务规则](docs/architecture.md)
@@ -51,3 +59,5 @@
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 本仓库不包含 TMDB 素材、用户片源、第三方下载字幕或任何访问凭证；P0 测试只使用代码生成的原创媒体与字幕。
+
+P3 已接入基础门禁后的字幕策略、最终清单与安全归档，使用与复验见 [P3 指南](docs/p3-tools.md)。自动归档默认关闭，需确认对应存储范围的 MOVE 能力；真实测试仅操作专用目录。

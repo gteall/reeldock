@@ -1,0 +1,159 @@
+import asyncio
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+
+from reeldock.completion import CompletionPipeline
+from reeldock.domain import ProviderError
+from reeldock.pipeline import MoviePipeline
+from reeldock.providers.shooter import ShooterProvider
+from reeldock.providers.tmdb import TMDBProvider
+from reeldock.providers.webdav import WebDAVProvider
+from reeldock.queue import Claim, Queue
+
+logger = logging.getLogger(__name__)
+Handler = Callable[[Claim], Awaitable[dict | None]]
+
+
+class Worker:
+    def __init__(
+        self,
+        queue: Queue,
+        settings,
+        runtime,
+        *,
+        handlers: dict[str, Handler] | None = None,
+        storage_factory=WebDAVProvider,
+        metadata_factory=TMDBProvider,
+        probe=None,
+        subtitle_factory=ShooterProvider,
+    ):
+        self.queue, self.settings, self.runtime = queue, settings, runtime
+        self.storage_factory = storage_factory
+        self.owner = uuid.uuid4().hex
+        self.movies = MoviePipeline(
+            queue,
+            settings,
+            runtime,
+            storage_factory=storage_factory,
+            metadata_factory=metadata_factory,
+        )
+        self.handlers = {
+            "connection_check": self.connection_check,
+            "scan": self.movies.scan,
+            "match_metadata": self.movies.match,
+            "base_assets_verified": self.movies.base,
+            "asset_retry": self.movies.retry_asset,
+            **(handlers or {}),
+        }
+        self.completion = CompletionPipeline(
+            self.movies, probe=probe, subtitle_factory=subtitle_factory
+        )
+        self.handlers = {
+            "subtitle_policy": self.completion.subtitle,
+            "final_manifest": self.completion.manifest,
+            "archive": self.completion.archive,
+            **self.handlers,
+        }
+        self.slots: list[asyncio.Task] = []
+
+    async def connection_check(self, claim: Claim) -> dict:
+        config, revision = self.settings.load()
+        if not config or revision != claim.config_revision:
+            raise ProviderError("configuration_changed_submit_new_task")
+        async with self.storage_factory(config) as storage:
+            input_entries = await storage.list(config.input_path)
+            output_entries = await storage.list(config.output_path)
+        # No filenames, server addresses or credentials in events/checkpoints.
+        return {
+            "input_entries": len(input_entries),
+            "output_entries": len(output_entries),
+            "mode": "read_only",
+            "writes_tested": False,
+            "move_tested": False,
+        }
+
+    async def heartbeat(self, claim: Claim, job: asyncio.Task):
+        try:
+            while True:
+                await asyncio.sleep(self.queue.lease_seconds / 3)
+                self.queue.heartbeat(claim)
+        except Exception:
+            # A renewal failure means ownership is uncertain. Cancel only this job,
+            # never the persistent polling slot that must accept subsequent work.
+            job.cancel()
+
+    async def run_steps(self, claim: Claim):
+        while True:
+            stage = self.queue.begin_step(claim)
+            if stage is None:
+                return
+            if stage == "archive":
+                config, _ = self.settings.load()
+                # Even an injected handler cannot bypass the operator's capability gate.
+                if not config.move_verified:
+                    raise ProviderError("move_capability_unverified")
+            handler = self.handlers.get(stage)
+            if handler is None:
+                raise ProviderError("stage_not_implemented_p1")
+            checkpoint = await handler(replace(claim, stage=stage))
+            self.queue.finish_step(claim, stage, checkpoint)
+            if stage in {"connection_check", "scan", "asset_retry", "archive"} or (
+                claim.kind == "movie_base" and stage == "base_assets_verified"
+            ):
+                return
+
+    async def execute(self, claim: Claim):
+        job = asyncio.create_task(self.run_steps(claim))
+        heartbeat = asyncio.create_task(self.heartbeat(claim, job))
+        try:
+            await job
+        except asyncio.CancelledError:
+            try:
+                self.queue.interrupt(claim)
+            except ProviderError:
+                pass  # A stale lease owner must not mutate the new owner's state.
+            if asyncio.current_task().cancelling():
+                raise  # Application shutdown cancels the polling slot too.
+        except Exception as error:
+            safe = (
+                error
+                if isinstance(error, ProviderError)
+                else ProviderError("internal_worker_error")
+            )
+            try:
+                self.queue.fail(claim, safe)
+            except ProviderError:
+                pass
+            logger.warning("", extra={"safe_code": safe.code})
+        finally:
+            heartbeat.cancel()
+            job.cancel()
+            await asyncio.gather(heartbeat, job, return_exceptions=True)
+
+    async def loop(self):
+        while True:
+            try:
+                claim = self.queue.claim(self.owner)
+                if claim:
+                    await self.execute(claim)
+                else:
+                    await asyncio.sleep(self.runtime.poll_seconds)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error("", extra={"safe_code": "worker_poll_failed"})
+                await asyncio.sleep(self.runtime.poll_seconds)
+
+    async def start(self):
+        self.queue.recover()
+        self.slots = [
+            asyncio.create_task(self.loop()) for _ in range(self.runtime.worker_concurrency)
+        ]
+
+    async def stop(self):
+        for slot in self.slots:
+            slot.cancel()
+        await asyncio.gather(*self.slots, return_exceptions=True)
+        self.slots.clear()

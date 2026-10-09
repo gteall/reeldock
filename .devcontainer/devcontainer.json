@@ -1,0 +1,12 @@
+{
+  "name": "ReelDock P1",
+  "build": {"dockerfile": "Dockerfile", "context": ".."},
+  "remoteUser": "vscode",
+  "forwardPorts": [8000, 5173],
+  "mounts": [
+    "source=reeldock-dev-venv,target=${containerWorkspaceFolder}/.venv,type=volume",
+    "source=reeldock-dev-node-modules,target=${containerWorkspaceFolder}/frontend/node_modules,type=volume"
+  ],
+  "postCreateCommand": "sudo chown -R vscode:vscode .venv frontend/node_modules && uv sync --frozen && cd frontend && pnpm install --frozen-lockfile",
+  "customizations": {"vscode": {"extensions": ["ms-python.python", "charliermarsh.ruff", "dbaeumer.vscode-eslint"]}}
+}

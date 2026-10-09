@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    ports:
+      - "127.0.0.1:${REELDOCK_DEV_PORT:-8000}:8000"
+    environment:
+      REELDOCK_ALLOWED_ORIGINS: '${REELDOCK_ALLOWED_ORIGINS:-["http://localhost:8000","http://127.0.0.1:8000"]}'
+      REELDOCK_SECURE_COOKIE: "false"
+    volumes:
+      - reeldock_dev_data:/data
+    stop_grace_period: 20s
+volumes:
+  reeldock_dev_data:

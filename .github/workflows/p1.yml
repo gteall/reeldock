@@ -1,0 +1,56 @@
+name: P1–P4 application
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.9.10'
+          python-version: '3.12'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: uv sync --frozen
+      - run: uv run ruff check backend scripts/p1_*.py scripts/p2_*.py scripts/p3_*.py scripts/p4_*.py
+      - run: uv run ruff format --check backend scripts/p1_*.py scripts/p2_*.py scripts/p3_*.py scripts/p4_*.py
+      - run: uv run pytest -q
+      - run: uv build --wheel
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.33.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm test
+      - run: pnpm build
+  development-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f Dockerfile.dev -t reeldock:p1 .
+      - run: docker run -d --name reeldock-p1 -p 127.0.0.1:8000:8000 reeldock:p1
+      - name: Wait for health
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/api/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs reeldock-p1
+          exit 1
+      - if: always()
+        run: docker rm -f reeldock-p1
