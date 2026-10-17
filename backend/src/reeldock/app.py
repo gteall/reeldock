@@ -43,6 +43,7 @@ from reeldock.security import (
     passwords,
     random_token,
 )
+from reeldock.state import inspect_state, state_lock
 from reeldock.subtitles import decode
 from reeldock.worker import Worker
 
@@ -79,35 +80,35 @@ def create_app(
         configure_logging()
         os.umask(0o077)
         runtime.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        db = Database(runtime.database_path)
-        db.migrate()
-        with db.sessions.begin() as session:
-            if session.get(Configuration, 1) and not (runtime.data_dir / "master.key").is_file():
+        with state_lock(runtime.data_dir):
+            inspect_state(runtime.database_path, runtime.data_dir / "master.key")
+            db = Database(runtime.database_path)
+            try:
+                db.migrate()
+                vault = Vault(runtime.data_dir)
+                store = SettingsStore(db, vault)
+                store.load()
+                queue = Queue(db, lease_seconds=runtime.lease_seconds)
+                worker = Worker(
+                    queue,
+                    store,
+                    runtime,
+                    **({"storage_factory": storage_factory} if storage_factory else {}),
+                    **({"metadata_factory": metadata_factory} if metadata_factory else {}),
+                    **({"probe": probe} if probe else {}),
+                    **({"subtitle_factory": subtitle_factory} if subtitle_factory else {}),
+                )
+                app.state.db, app.state.store, app.state.queue = db, store, queue
+                app.state.worker = worker
+                app.state.dummy_password_hash = passwords.hash(random_token())
+                if runtime.worker_enabled:
+                    await worker.start()
+                try:
+                    yield
+                finally:
+                    await worker.stop()
+            finally:
                 db.close()
-                raise RuntimeError("credential_key_missing_restore_master_key")
-        vault = Vault(runtime.data_dir)
-        store = SettingsStore(db, vault)
-        store.load()  # Fail closed if an existing database cannot be decrypted.
-        queue = Queue(db, lease_seconds=runtime.lease_seconds)
-        worker = Worker(
-            queue,
-            store,
-            runtime,
-            **({"storage_factory": storage_factory} if storage_factory else {}),
-            **({"metadata_factory": metadata_factory} if metadata_factory else {}),
-            **({"probe": probe} if probe else {}),
-            **({"subtitle_factory": subtitle_factory} if subtitle_factory else {}),
-        )
-        app.state.db, app.state.store, app.state.queue = db, store, queue
-        app.state.worker = worker
-        app.state.dummy_password_hash = passwords.hash(random_token())
-        if runtime.worker_enabled:
-            await worker.start()
-        try:
-            yield
-        finally:
-            await worker.stop()
-            db.close()
 
     app = FastAPI(
         title="ReelDock · 影坞",
@@ -172,7 +173,7 @@ def create_app(
             session.execute(text("SELECT 1"))
             row = session.get(Configuration, 1)
             enabled = bool(row and app.state.store.vault.open(row.encrypted).move_verified)
-        return {"status": "ok", "version": __version__, "phase": "P4", "archive_enabled": enabled}
+        return {"status": "ok", "version": __version__, "phase": "P5", "archive_enabled": enabled}
 
     @app.get("/api/auth/status")
     def auth_status():

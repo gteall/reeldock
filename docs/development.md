@@ -50,9 +50,9 @@ pnpm dev
 
 路径使用相对于 WebDAV 端点的已解码绝对路径，例如 `/incoming`；WebDAV 地址通常包含 `/dav/`。输入 / 输出不得相同、互为上下级或为根目录；路径中的 `.`、`..`、反斜杠及编码后的穿越会被拒绝。Unicode、空格、`#`、字面量 `%` 支持一次正确编码。
 
-整个连接配置使用 Fernet 加密后存入数据库，密钥文件权限为 0600。已有加密配置却缺失 / 不匹配密钥时启动失败，不自动替换密钥。**备份和恢复必须同时包含数据库与 master.key**；SQLite 正在运行时使用 SQLite backup API，不要单独复制可能尚未 checkpoint 的主文件。P5 再提供正式备份工具和密钥轮换。
+整个连接配置使用 Fernet 加密后存入数据库，密钥文件权限为 0600。已有加密配置却缺失 / 不匹配密钥时启动失败，不自动替换密钥。**备份和恢复必须同时包含数据库与 master.key**；SQLite 正在运行时使用 SQLite backup API，不要单独复制可能尚未 checkpoint 的主文件。P5 已提供备份、恢复与迁移检查，见 [维护指南](upgrade.md)；自动密钥轮换尚未实现。
 
-登录后使用持久化的、不透明 HttpOnly / SameSite=Strict 会话 cookie，24 小时过期；修改接口还要求允许的 Origin 和会话对应的 `X-CSRF-Token`。登录同样校验来源，并持久化限制同来源 IP 每分钟 5 次尝试。通用 HTTP 客户端可先读取登录响应或 `/api/auth/session` 获取 CSRF；不提供 CORS 跨站访问。生产部署的 TLS 和反向代理细节留待 P5。
+登录后使用持久化的、不透明 HttpOnly / SameSite=Strict 会话 cookie，24 小时过期；修改接口还要求允许的 Origin 和会话对应的 `X-CSRF-Token`。登录同样校验来源，并持久化限制同来源 IP 每分钟 5 次尝试。通用 HTTP 客户端可先读取登录响应或 `/api/auth/session` 获取 CSRF；不提供 CORS 跨站访问。生产 TLS、来源和反向代理配置见 [部署指南](deployment.md)。
 
 日志仅输出白名单事件代码及等级；不输出请求 URL、正文、原始异常或 SQL 参数。HTTPX、Uvicorn 日志统一进入此格式，启动时较早的进程提示不包含连接配置。API 校验错误移除原始 input / context，避免把密码从错误响应带回。任务事件只保存安全代码、阶段及计数，不保存目录列表、签名 URL 或第三方响应正文。
 
@@ -85,7 +85,7 @@ docker compose -f compose.dev.yaml up -d --build
 docker compose -f compose.dev.yaml exec app /app/.venv/bin/reeldock init-admin
 ```
 
-访问 `http://localhost:8000`。开发镜像由 Node 前端构建和 Python 后端组成，单应用容器、单 Uvicorn 进程、非 root 用户、带健康检查。命名卷 `reeldock_dev_data` 持久化 `/data`，普通 `down` 保留数据。**不要使用 `down -v` 清理已配置的数据卷**。P1 不发布镜像；飞牛 NAS / GHCR 正式交付属于 P5。
+访问 `http://localhost:8000`。开发镜像由 Node 前端构建和 Python 后端组成，单应用容器、单 Uvicorn 进程、非 root 用户、带健康检查。命名卷 `reeldock_dev_data` 持久化 `/data`，普通 `down` 保留数据。**不要使用 `down -v` 清理已配置的数据卷**。开发镜像不发布；生产部署使用 P5 的 [独立 Compose](deployment.md)，发布镜像需明确的发布指令。
 
 本机 Docker Hub 鉴权地址曾连接超时，已用相同官方基础镜像的公共 ECR 镜像来源完成构建：
 

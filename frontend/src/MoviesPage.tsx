@@ -245,7 +245,7 @@ export function MoviesPage() {
       <Alert
         type="info"
         showIcon
-        title="P4 · 电影与剧集工作台"
+        title="电影与剧集工作台"
         description="整包电影或剧集基础必需资产全部远程验证后才处理字幕；中文剧每集零探测。任一集失败保留整包，目标已有目录不覆盖或合并。"
       />
       <div className="library-layout">

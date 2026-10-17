@@ -8,6 +8,7 @@ class Runtime(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="REELDOCK_", env_file=".env.app", extra="ignore")
 
     data_dir: Path = Path("data")
+    cache_dir: Path | None = None
     frontend_dir: Path = Path("frontend/dist")
     allowed_origins: list[str] = [
         "http://localhost:5173",
@@ -24,3 +25,7 @@ class Runtime(BaseSettings):
     @property
     def database_path(self) -> Path:
         return self.data_dir / "reeldock.sqlite3"
+
+    @property
+    def asset_cache_path(self) -> Path:
+        return (self.cache_dir or self.data_dir / "cache") / "assets"

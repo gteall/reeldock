@@ -24,6 +24,7 @@ import {
   ApartmentOutlined,
   CheckCircleOutlined,
   CloudServerOutlined,
+  InfoCircleOutlined,
   LogoutOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
@@ -34,6 +35,7 @@ import type { Config, Session, Task, TaskEvent } from './api'
 import { MoviesPage } from './MoviesPage'
 import { connectEvents } from './liveEvents'
 import type { LiveState } from './liveEvents'
+import { AboutPage } from './AboutPage'
 
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
@@ -134,7 +136,7 @@ function LoginPage({ onLogin }: { onLogin: (value: Session) => void }) {
             进入控制台
           </Button>
         </Form>
-        <Text type="secondary">电影与剧集刮削 · P4</Text>
+        <Text type="secondary">电影与剧集刮削</Text>
       </Card>
     </div>
   )
@@ -726,10 +728,11 @@ export default function App() {
             { key: 'settings', icon: <SettingOutlined />, label: '连接与配置' },
             { key: 'tasks', icon: <ApartmentOutlined />, label: '任务中心' },
             { key: 'events', icon: <ReloadOutlined />, label: '运行事件' },
+            { key: 'about', icon: <InfoCircleOutlined />, label: '关于影坞' },
           ]}
         />
         <div className="sidebar-bottom">
-          <Tag color="cyan">P4 · 电影与剧集</Tag>
+          <Tag color="cyan">P5 · 发布准备</Tag>
           <p>
             归档需验证 MOVE 能力 ·{' '}
             {
@@ -744,13 +747,15 @@ export default function App() {
         <header>
           <span>
             影坞控制台 <span className="header-slash">/</span>{' '}
-            {page === 'movies'
-              ? '电影'
-              : page === 'settings'
-                ? '配置'
-                : page === 'tasks'
-                  ? '任务'
-                  : '事件'}
+            {page === 'about'
+              ? '关于'
+              : page === 'movies'
+                ? '电影'
+                : page === 'settings'
+                  ? '配置'
+                  : page === 'tasks'
+                    ? '任务'
+                    : '事件'}
           </span>
           <Space>
             <Text type="secondary">{session.data.username}</Text>
@@ -764,29 +769,35 @@ export default function App() {
             <div>
               <span className="eyebrow">REELDOCK / {page.toUpperCase()}</span>
               <Title level={2}>
-                {page === 'movies'
-                  ? '电影与剧集'
-                  : page === 'settings'
-                    ? '连接与配置'
-                    : page === 'tasks'
-                      ? '任务中心'
-                      : '运行事件'}
+                {page === 'about'
+                  ? '关于影坞'
+                  : page === 'movies'
+                    ? '电影与剧集'
+                    : page === 'settings'
+                      ? '连接与配置'
+                      : page === 'tasks'
+                        ? '任务中心'
+                        : '运行事件'}
               </Title>
               <Paragraph type="secondary">
-                {page === 'movies'
-                  ? '查看匹配、随片图片和基础资产远程验证结果。'
-                  : page === 'settings'
-                    ? '连接远程存储，为媒体工作流准备一个可靠的起点。'
-                    : page === 'tasks'
-                      ? '查看持久化阶段、检查点与错误，按需暂停或重试。'
-                      : '每一次状态变化都有记录，重启之后仍可追溯。'}
+                {page === 'about'
+                  ? '版本、数据来源与使用说明。'
+                  : page === 'movies'
+                    ? '查看匹配、随片图片和基础资产远程验证结果。'
+                    : page === 'settings'
+                      ? '连接远程存储，为媒体工作流准备一个可靠的起点。'
+                      : page === 'tasks'
+                        ? '查看持久化阶段、检查点与错误，按需暂停或重试。'
+                        : '每一次状态变化都有记录，重启之后仍可追溯。'}
               </Paragraph>
             </div>
             <Tag icon={<CheckCircleOutlined />} color="success">
               本地持久化
             </Tag>
           </div>
-          {page === 'movies' ? (
+          {page === 'about' ? (
+            <AboutPage />
+          ) : page === 'movies' ? (
             <MoviesPage />
           ) : page === 'settings' ? (
             <SettingsPage />

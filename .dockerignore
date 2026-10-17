@@ -19,3 +19,8 @@ secrets
 .devcontainer
 *.key
 *.pem
+dist
+scripts
+docs
+.github
+**/.instance.lock

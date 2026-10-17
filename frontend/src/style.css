@@ -364,6 +364,12 @@ pre {
   border-radius: 8px;
   font-size: 12px;
 }
+.tmdb-logo {
+  display: block;
+  width: 120px;
+  height: auto;
+  margin-bottom: 20px;
+}
 .actors-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));

@@ -57,6 +57,7 @@ class Worker:
             **self.handlers,
         }
         self.slots: list[asyncio.Task] = []
+        self.draining = False
 
     async def connection_check(self, claim: Claim) -> dict:
         config, revision = self.settings.load()
@@ -133,7 +134,7 @@ class Worker:
             await asyncio.gather(heartbeat, job, return_exceptions=True)
 
     async def loop(self):
-        while True:
+        while not self.draining:
             try:
                 claim = self.queue.claim(self.owner)
                 if claim:
@@ -147,13 +148,18 @@ class Worker:
                 await asyncio.sleep(self.runtime.poll_seconds)
 
     async def start(self):
+        self.draining = False
         self.queue.recover()
         self.slots = [
             asyncio.create_task(self.loop()) for _ in range(self.runtime.worker_concurrency)
         ]
 
     async def stop(self):
+        self.request_stop()
         for slot in self.slots:
             slot.cancel()
         await asyncio.gather(*self.slots, return_exceptions=True)
         self.slots.clear()
+
+    def request_stop(self):
+        self.draining = True

@@ -2,7 +2,9 @@
 
 面向 NAS 的影视刮削与归档工具：从 OpenList 提供的 WebDAV 待刮削目录发现影视文件，通过 TMDB 获取元数据，将 NFO、海报、背景图、演员头像和所需字幕写回 WebDAV，全部必需项验证通过后移动整个媒体目录。
 
-**当前状态：P4 电视剧与媒体工作台已实现。** 电影与剧集共用上传、字幕及安全归档组件；整包基础必需资产验证后才逐集处理字幕，中文剧全部零探测。支持季集人工修正、逐集 NFO、共享图片与 `.actors`、独立增强图、失败集恢复、目录树、批量操作及 SSE 重连。目标已有剧目录时拒绝合并 / 覆盖。自动归档默认关闭，需确认存储范围能力。证据与边界见 [开发进度](docs/progress.md)、[P4 指南](docs/p4-tools.md)及[兼容性记录](docs/compatibility.md)。
+**当前状态：P5 部署与发布准备。** 已提供生产多阶段镜像、Compose、非 root UID/GID、备份恢复、迁移检查、单实例锁及优雅退出；关于页包含随应用打包的 TMDB 标识。电影与剧集共用基础资产、字幕和安全归档流程。当前仍为开发版本，v0.1.0 仅准备发布材料，尚未推送发布镜像、创建标签或 Release。实机与 Mock 证据分别记录在 [开发进度](docs/progress.md)和[兼容范围](docs/compatibility.md)。
+
+生产部署见 [Docker / 飞牛指南](docs/deployment.md)，维护见 [备份、升级与回退](docs/upgrade.md)，复验见 [P5 验证指南](docs/p5-tools.md)。
 
 本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
 
@@ -24,7 +26,7 @@ OpenList 可保持 **302 直链模式**。“下载重定向主机限制”默�
 
 ## 技术方案
 
-| 部分 | 计划选型 |
+| 部分 | 实现选型 |
 | --- | --- |
 | 后端 | Python 3.12 + FastAPI + Pydantic |
 | 前端 | React + TypeScript + Vite + Ant Design + TanStack Query |
@@ -42,6 +44,10 @@ OpenList 可保持 **302 直链模式**。“下载重定向主机限制”默�
 - [P2 电影刮削与验证](docs/p2-tools.md)
 - [P3 字幕与安全归档](docs/p3-tools.md)
 - [P4 剧集与批量工作台](docs/p4-tools.md)
+- [Docker / 飞牛部署](docs/deployment.md)
+- [备份、升级与回退](docs/upgrade.md)
+- [P5 验证指南](docs/p5-tools.md)
+- [v0.1.0 发布说明草案](docs/releases/v0.1.0.md)
 - [兼容性与实测边界](docs/compatibility.md)
 - [开发进度与交接](docs/progress.md)
 - [总体架构与业务规则](docs/architecture.md)
@@ -58,6 +64,6 @@ OpenList 可保持 **302 直链模式**。“下载重定向主机限制”默�
 
 > This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-本仓库不包含 TMDB 素材、用户片源、第三方下载字幕或任何访问凭证；P0 测试只使用代码生成的原创媒体与字幕。
+本仓库仅打包获批准的 TMDB Logo，不包含影视图片、用户片源、第三方下载字幕或访问凭证；验证媒体与字幕由代码生成。标识来源见 [来源说明](docs/attribution.md)。
 
 P3 已接入基础门禁后的字幕策略、最终清单与安全归档，使用与复验见 [P3 指南](docs/p3-tools.md)。自动归档默认关闭，需确认对应存储范围的 MOVE 能力；真实测试仅操作专用目录。

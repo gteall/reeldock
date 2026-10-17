@@ -50,7 +50,7 @@ class MoviePipeline:
     ):
         self.queue, self.db, self.settings = queue, queue.db, settings
         self.storage_factory, self.metadata_factory = storage_factory, metadata_factory
-        self.cache = Cache(self.db, runtime.data_dir / "cache" / "assets")
+        self.cache = Cache(self.db, runtime.asset_cache_path)
         self.scanner = Scanner(self.db)
 
     def check(self, claim):

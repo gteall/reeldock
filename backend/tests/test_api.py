@@ -18,6 +18,7 @@ def test_config_persists_encrypted_and_session_survives_restart(client, runtime,
     with client.app.state.db.sessions.begin() as session:
         encrypted = session.get(Configuration, 1).encrypted
         assert "dav.example" not in encrypted and "private" not in encrypted
+    client.__exit__(None, None, None)  # A restart releases the old instance's state lock.
     with TestClient(create_app(runtime)) as restarted:
         restarted.cookies.update(client.cookies)
         loaded = restarted.get("/api/config")
@@ -161,6 +162,7 @@ def test_missing_key_on_restart_does_not_silently_generate_replacement(
     client, runtime, config_body
 ):
     assert client.put("/api/config", json=config_body).status_code == 200
+    client.__exit__(None, None, None)
     key = runtime.data_dir / "master.key"
     key.unlink()
     with pytest.raises(RuntimeError, match="credential_key_missing"):
