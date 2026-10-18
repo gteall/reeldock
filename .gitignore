@@ -46,6 +46,7 @@ dist/
 coverage/
 playwright-report/
 test-results/
+*.tsbuildinfo
 
 # Editor / OS
 .DS_Store
