@@ -78,11 +78,7 @@ def rank_candidates(parsed: ParsedName, movies) -> list[dict]:
 
 
 def automatic_candidate(rows: list[dict]) -> str | None:
-    # No year, conflicting year, homonyms and near ties require a human choice.
-    if (
-        rows
-        and rows[0]["exact"]
-        and (len(rows) == 1 or rows[0]["confidence"] - rows[1]["confidence"] >= 0.15)
-    ):
+    # rank_candidates puts the highest score first, including homonyms and near ties.
+    if rows and rows[0]["confidence"] > 0.8:
         return rows[0]["id"]
     return None

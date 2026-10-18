@@ -131,20 +131,61 @@ async def test_put_timeout_reconciles_without_second_put(foundation, tmp_path):
     forbidden_calls(env)
 
 
-async def test_homonym_requires_manual_choice_and_does_not_write(foundation, tmp_path):
+@pytest.mark.parametrize("titles", [("Example", "Example"), ("Example One", "Example Two")])
+async def test_high_confidence_ambiguous_candidates_are_auto_selected(foundation, tmp_path, titles):
     env = await setup_pipeline(foundation, tmp_path)
-    env[6].movies.append(Movie(source="tmdb", external_id="456", title="Example", year=2020))
+    metadata = env[6]
+    metadata.movies[0] = metadata.movies[0].model_copy(
+        update={"title": titles[0], "original_title": titles[0]}
+    )
+    metadata.movies.append(Movie(source="tmdb", external_id="456", title=titles[1], year=2020))
+    task, package = await run_movie(env)
+    assert task.status == "completed", task.error_code
+    assert package.tmdb_id == "123"
+    with env[0].sessions.begin() as session:
+        record = session.get(MovieRecord, package.id)
+        assert record.match_status == "matched" and record.manual_id is None
+        assert len(record.candidates) == 2
+        assert record.candidates[0]["confidence"] > 0.8
+        assert record.candidates[0]["confidence"] == record.candidates[1]["confidence"]
+    assert nfo_ids(env[5].files[package.remote_path + "/Example.2020.1080p.nfo"]) == {"123"}
+    forbidden_calls(env)
+
+
+async def test_low_confidence_requires_manual_choice_and_does_not_write(foundation, tmp_path):
+    env = await setup_pipeline(foundation, tmp_path)
+    env[6].movies[0] = env[6].movies[0].model_copy(update={"year": 2019})
+    env[6].movies.append(Movie(source="tmdb", external_id="456", title="Example", year=2019))
     task, package = await run_movie(env)
     assert task.error_code == "tmdb_match_needs_review"
     assert not env[5].files
     with env[0].sessions.begin() as session:
         record = session.get(MovieRecord, package.id)
         assert len(record.candidates) == 2
+        assert all(candidate["confidence"] <= 0.8 for candidate in record.candidates)
         record.manual_id = "123"
     env[2].control(task.id, "retry")
     await env[7].execute(env[2].claim("manual"))
     with env[0].sessions.begin() as session:
         assert session.get(Task, task.id).status == "completed"
+    forbidden_calls(env)
+
+
+async def test_previously_blocked_match_retries_without_manual_selection(
+    foundation, tmp_path, monkeypatch
+):
+    env = await setup_pipeline(foundation, tmp_path)
+    env[6].movies.append(Movie(source="tmdb", external_id="456", title="Example", year=2020))
+    with monkeypatch.context() as previous_policy:
+        previous_policy.setattr("reeldock.pipeline.automatic_candidate", lambda _: None)
+        task, package = await run_movie(env)
+    assert task.status == "blocked" and task.error_code == "tmdb_match_needs_review"
+    env[2].control(task.id, "retry")
+    await env[7].execute(env[2].claim("updated-policy"))
+    with env[0].sessions.begin() as session:
+        assert session.get(Task, task.id).status == "completed"
+        assert session.get(Package, package.id).tmdb_id == "123"
+        assert session.get(MovieRecord, package.id).manual_id is None
     forbidden_calls(env)
 
 
@@ -236,6 +277,23 @@ def test_name_year_parsing_and_wrong_year_not_auto_selected():
     assert automatic_candidate(rows) is None
     with pytest.raises(ProviderError, match="invalid_image"):
         validate_image(jpeg()[:100])
+
+
+@pytest.mark.parametrize(
+    "confidence,expected",
+    [(1.0, "123"), (0.81, "123"), (0.801, "123"), (0.8, None), (0.799, None), (0.0, None)],
+)
+def test_automatic_match_uses_strict_eighty_percent_threshold(confidence, expected):
+    assert automatic_candidate([]) is None
+    assert (
+        automatic_candidate(
+            [
+                {"id": "123", "confidence": confidence, "exact": False},
+                {"id": "456", "confidence": confidence, "exact": False},
+            ]
+        )
+        == expected
+    )
 
 
 async def test_existing_images_are_validated_reused_without_tmdb_downloads(foundation, tmp_path):

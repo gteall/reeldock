@@ -9,7 +9,7 @@ from sqlalchemy import select
 from reeldock.domain import ProviderError, Stage
 from reeldock.episodes import parse_episode
 from reeldock.exporter import read_nfo
-from reeldock.models import Asset, Media, Package, Task
+from reeldock.models import Asset, Media, MovieRecord, Package, Task
 
 
 @pytest.mark.parametrize(
@@ -41,6 +41,45 @@ def test_episode_parsing(path, pair):
 def test_ambiguous_episode_is_not_flattened(name, code):
     with pytest.raises(ProviderError, match=code):
         parse_episode(ROOT + "/" + name, ROOT)
+
+
+@pytest.mark.parametrize("year,automatic", [(2020, True), (2019, False)])
+async def test_series_ambiguous_candidates_follow_confidence_threshold(
+    foundation, tmp_path, monkeypatch, year, automatic
+):
+    env = await setup_tv(foundation, tmp_path)
+    db, _, _, dav, metadata, probe, shooter, _, _ = env
+    metadata.series = metadata.series.model_copy(
+        update={"title": "Example One", "original_title": "Example One", "year": year}
+    )
+    runner_up = metadata.series.model_copy(
+        update={"external_id": "456", "title": "Example Two", "original_title": "Example Two"}
+    )
+
+    async def search(query, kind, year=None):
+        assert kind == "tv"
+        return [runner_up, metadata.series]
+
+    monkeypatch.setattr(metadata, "search", search)
+    task, package = await run_tv(env)
+    with db.sessions.begin() as session:
+        record = session.get(MovieRecord, package.id)
+        assert len(record.candidates) == 2
+        assert record.candidates[0]["confidence"] == record.candidates[1]["confidence"]
+        assert record.manual_id is None
+        if automatic:
+            assert task.status == "completed", task.error_code
+            assert package.tmdb_id == "123" and record.match_status == "matched"
+            assert record.candidates[0]["confidence"] > 0.8
+            assert read_nfo(dav.files[ROOT + "/tvshow.nfo"], "tvshow").findtext("title") == (
+                "Example One"
+            )
+        else:
+            assert task.status == "blocked" and task.error_code == "tmdb_match_needs_review"
+            assert package.tmdb_id is None and record.match_status == "needs_review"
+            assert record.candidates[0]["confidence"] <= 0.8
+            assert not dav.files
+    assert not probe.calls and not shooter.calls and dav.calls["move"] == 0
 
 
 @pytest.mark.parametrize("language", ["zh", "cn"])
