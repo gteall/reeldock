@@ -38,31 +38,17 @@ def test_config_persists_encrypted_and_session_survives_restart(client, runtime,
 
 
 @pytest.mark.parametrize(
-    ("input_path", "output_path"),
-    [
-        ("/same/", "/same"),
-        ("/a", "/a/sub"),
-        ("/a/sub", "/a"),
-        ("/", "/b"),
-        ("/a", "/"),
-        ("/a/../b", "/c"),
-        ("/a/%252e%252e/b", "/c"),
-        ("relative", "/c"),
-        ("/a", "/%61/sub"),
-        ("/a\\bad", "/c"),
-    ],
+    "paths", [[], ["/"], ["relative"], ["/a/../b"], ["/a/%252e%252e/b"], ["/a\\bad"], ["/ok", ""]]
 )
-def test_invalid_paths_rejected_without_persisting(client, config_body, input_path, output_path):
-    response = client.put(
-        "/api/config", json={**config_body, "input_path": input_path, "output_path": output_path}
-    )
+def test_invalid_paths_rejected_without_persisting(client, config_body, paths):
+    response = client.put("/api/config", json={**config_body, "scrape_paths": paths})
     assert response.status_code == 422
     assert "webdav-private-secret" not in response.text
     assert client.get("/api/config").json()["revision"] == 0
 
 
 def test_valid_special_paths_and_no_credential_urls(client, config_body):
-    body = {**config_body, "input_path": "/待刮削 #100%", "output_path": "/影库"}
+    body = {**config_body, "scrape_paths": ["/待刮削 #100%", "/影库"]}
     assert client.put("/api/config", json=body).status_code == 200
     body.update(expected_revision=1, webdav_url="https://user:secret@dav.example/dav/")
     response = client.put("/api/config", json=body)
@@ -120,7 +106,7 @@ def test_duplicate_tasks_and_recoverable_events(client, config_body):
         client.post("/api/tasks", json={**body, "package_path": "/incoming/other"}).status_code
         == 409
     )
-    assert client.post("/api/tasks", json={**body, "package_path": "/incoming"}).status_code == 422
+    assert client.post("/api/tasks", json={**body, "package_path": "/incoming"}).status_code == 409
     assert (
         client.post("/api/tasks", json={**body, "package_path": "/library/movie"}).status_code
         == 422

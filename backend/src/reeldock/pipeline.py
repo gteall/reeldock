@@ -88,6 +88,9 @@ class MoviePipeline:
     async def source(self, claim, storage, config):
         self.check(claim)
         package, record = self.record(claim)
+        root = config.root_for(package.remote_path)
+        if root is None:
+            raise ProviderError("package_outside_scrape_directories")
         entries = (
             flatten(
                 await collect(storage, package.remote_path, lambda: self.check(claim)),
@@ -108,7 +111,7 @@ class MoviePipeline:
             snapshot["kind"] = package.kind
         reason = package_reason(
             package.remote_path,
-            config.input_path,
+            root,
             entries,
             media_entries(entries),
             package.kind,
@@ -254,7 +257,9 @@ class MoviePipeline:
         names = {}
         cast = []
         for index, person in enumerate(people):
-            selected = config.actor_limit == 0 or index < config.actor_limit
+            selected = config.scrape_actor_images and (
+                config.actor_limit == 0 or index < config.actor_limit
+            )
             filename = actor_filename(person.name) if selected else None
             if selected:
                 key = filename.casefold()
@@ -288,8 +293,10 @@ class MoviePipeline:
                 package.base_status = "pending"
 
     def freeze(self, claim, record, config, entries):
+        record.cast = self.cast([Person.model_validate(person) for person in record.cast], config)
         with self.db.sessions.begin() as session:
             kind = session.get(Package, claim.package_id).kind
+            session.get(MovieRecord, claim.package_id).cast = record.cast
         sources = {}
         if kind == "tv":
             movie, plan, sources = asset_descriptions(self, claim, record)
@@ -312,7 +319,7 @@ class MoviePipeline:
         plan += [
             (p["path"], "actor", bool(p["profile"]) or config.actor_policy == "strict")
             for p in record.cast
-            if p.get("selected", True)
+            if config.scrape_actor_images and p.get("selected", True)
         ]
         plan_changed = False
         with self.db.sessions.begin() as session:
@@ -391,6 +398,8 @@ class MoviePipeline:
                         )
                     )
                     plan = [(asset.relative_path, asset.kind, asset.required)]
+                    if asset.kind == "actor" and not config.scrape_actor_images:
+                        raise ProviderError("actor_images_disabled")
             people = [Person.model_validate(p) for p in record.cast]
 
             async def produce(path, kind):

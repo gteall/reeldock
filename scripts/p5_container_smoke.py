@@ -238,8 +238,7 @@ def run(args, checks):
             remote_secret = secrets.token_urlsafe(24)
             config = {
                 "webdav_url": "https://dav.example/dav/",
-                "input_path": "/incoming",
-                "output_path": "/library",
+                "scrape_paths": ["/incoming"],
                 "webdav_password": remote_secret,
             }
             saved = client.put("/api/config", json=config)
@@ -326,7 +325,7 @@ def run(args, checks):
             login(client, password)
             config.update(
                 stable_seconds=1,
-                move_verified=True,
+                scrape_actor_images=True,
                 probe_timeout_seconds=90,
                 probe_max_bytes=2097152,
             )
@@ -348,7 +347,7 @@ def run(args, checks):
             state = harness.state()
             assert state["calls"].get("media_reads", 0) == 0
             assert state["calls"].get("subtitle_downloads", 0) == 0
-            assert state["calls"]["move"] == 2
+            assert state["calls"].get("move", 0) == 0
             checks.append("chinese_movie_and_series_zero_probe_or_video_reads")
             for package in client.get("/api/packages").json()["items"]:
                 if package["original_language"] in {"zh", "cn"}:
@@ -362,7 +361,7 @@ def run(args, checks):
             state = harness.state()
             assert state["calls"].get("video-group:BadMovie (2020)", 0) == 0
             assert state["calls"].get("move-group:BadMovie (2020)", 0) == 0
-            checks.append("required_image_failure_blocks_probe_and_move")
+            checks.append("required_image_failure_blocks_probe_and_completion")
             foreign = submit(client, "/incoming/ForeignTV (2020)", "foreign-series")
             failed = wait_task(client, foreign, "blocked", "subtitle_policy")
             assert failed["error_code"] == "subtitle_no_match"
@@ -380,7 +379,7 @@ def run(args, checks):
                 ),
             )
             harness.marker("repair-subtitles")
-            harness.marker("crash-move", "ForeignTV (2020)")
+            harness.marker("crash-manifest", "ForeignTV (2020)")
             assert client.post("/api/tasks/" + foreign + "/retry").status_code == 200
             wait_for(
                 lambda: (
@@ -389,25 +388,25 @@ def run(args, checks):
                         "-c",
                         (
                             "from pathlib import Path; "
-                            'print(Path("/mock-remote/move-finished").exists())'
+                            'print(Path("/mock-remote/manifest-written").exists())'
                         ),
                     ).stdout.strip()
                     == "True"
                 ),
-                "move_marker_timeout",
+                "manifest_marker_timeout",
             )
             harness.docker("kill", "--signal", "KILL", harness.name)
             harness.start(fixture_data, fixture_cache, remote)
             healthy(client)
             wait_task(client, foreign, "completed")
             state = harness.state()
-            assert state["calls"]["move-group:ForeignTV (2020)"] == 1
+            assert state["calls"].get("move", 0) == 0
             assert state["calls"]["subtitle_downloads"] == 2
-            assert "/incoming/ForeignTV (2020)" not in state["directories"]
-            assert "/library/ForeignTV (2020)" in state["directories"]
+            assert "/incoming/ForeignTV (2020)" in state["directories"]
+            assert "/library/ForeignTV (2020)" not in state["directories"]
             # Two extra writes: the failed episode subtitle and final manifest.
             assert state["calls"]["put-group:ForeignTV (2020)"] == puts + 2
-            checks.append("lost_move_response_container_kill_and_restart_reconciles_once")
+            checks.append("lost_manifest_response_container_kill_and_restart_reconciles_in_place")
             checks.append("retry_reuses_verified_base_and_successful_episode")
             checks.append("missing_cache_rebuilt_without_reuploading_base")
             harness.marker("repair-image")
@@ -421,8 +420,8 @@ def run(args, checks):
             exported.mkdir(parents=True, exist_ok=True)
             # Generated content only, for a separate Kodi import test / operator review.
             for path, encoded in harness.state()["files"].items():
-                if path.startswith("/library/") and Path(path).suffix in {".nfo", ".jpg", ".srt"}:
-                    relative = Path(path.removeprefix("/library/"))
+                if path.startswith("/incoming/") and Path(path).suffix in {".nfo", ".jpg", ".srt"}:
+                    relative = Path(path.removeprefix("/incoming/"))
                     category = "tv" if "TV" in relative.parts[0] else "movies"
                     target = exported / category / relative
                     target.parent.mkdir(parents=True, exist_ok=True)
@@ -435,8 +434,8 @@ def run(args, checks):
             import shutil
 
             for path in harness.state()["media"]:
-                if path.startswith("/library/"):
-                    relative = Path(path.removeprefix("/library/"))
+                if path.startswith("/incoming/"):
+                    relative = Path(path.removeprefix("/incoming/"))
                     category = "tv" if "TV" in relative.parts[0] else "movies"
                     target = exported / category / relative
                     target.parent.mkdir(parents=True, exist_ok=True)

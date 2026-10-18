@@ -1,3 +1,5 @@
+> 历史阶段文档：当前版本已改为多目录原地刮削并移除归档移动，演员头像默认关闭。当前行为以 [原地刮削说明](in-place-scraping.md) 为准；本文中的 MOVE / 归档内容仅作历史记录。
+
 # P3 字幕与安全归档
 
 P3 仅覆盖 P2 已支持的独立电影包。电视剧留待 P4。启动方式见 [development.md](development.md)，使用当前锁文件执行 `uv sync --frozen`；本机需安装 FFprobe / FFmpeg，开发镜像已包含两者。

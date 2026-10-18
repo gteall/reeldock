@@ -147,11 +147,7 @@ class Shooter:
 async def setup(foundation, tmp_path, original="en", audio="eng", **changes):
     db, store, queue = foundation
     config, revision = store.load()
-    store.save(
-        ConfigUpdate(
-            **{**config.model_dump(), "move_verified": True, **changes}, expected_revision=revision
-        )
-    )
+    store.save(ConfigUpdate(**{**config.model_dump(), **changes}, expected_revision=revision))
     config, revision = store.load()
     dav, tmdb = DAV(), FakeTMDB()
     tmdb.movies[0].original_language = original

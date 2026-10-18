@@ -18,8 +18,8 @@ def config_body():
         "webdav_username": "test",
         "webdav_password": "webdav-private-secret",
         "tmdb_token": "tmdb-private-token",
-        "input_path": "/incoming",
-        "output_path": "/library",
+        "scrape_paths": ["/incoming"],
+        "scrape_actor_images": True,
     }
 
 

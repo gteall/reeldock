@@ -52,8 +52,7 @@ async def tmdb(args):
             cache = Cache(db, root / "cache")
             config = AppConfig(
                 webdav_url="https://dav.example/dav/",
-                input_path="/incoming",
-                output_path="/library",
+                scrape_paths=["/incoming"],
                 tmdb_token=values["P2_TMDB_TOKEN"],
                 proxy_url=values.get("P2_PROXY_URL") or None,
             )
@@ -96,8 +95,7 @@ async def webdav(args):
         webdav_url=values["P0_WEBDAV_URL"],
         webdav_username=values.get("P0_WEBDAV_USERNAME") or "",
         webdav_password=values.get("P0_WEBDAV_PASSWORD"),
-        input_path="/p2-test-input",
-        output_path="/p2-test-output",
+        scrape_paths=["/p2-test-input"],
         http_timeout_seconds=30,
         redirect_hosts=[
             h.strip() for h in (values.get("P0_REDIRECT_HOSTS") or "").split(",") if h.strip()

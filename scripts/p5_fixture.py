@@ -113,6 +113,15 @@ class PersistentDAV(DAV):
         await super().put(path, content)
         self.calls["put-group:" + PurePosixPath(path).parts[2]] += 1
         self.save()
+        flag = ROOT / "crash-manifest"
+        if (
+            path.endswith(".json")
+            and flag.exists()
+            and flag.read_text() == PurePosixPath(path).parts[2]
+        ):
+            flag.unlink()
+            (ROOT / "manifest-written").touch()
+            await asyncio.Event().wait()
 
     async def mkdir(self, path):
         await super().mkdir(path)
@@ -128,16 +137,7 @@ class PersistentDAV(DAV):
         return self.video[start : start + length]
 
     async def move(self, source, target):
-        self.calls["move"] += 1
-        self.calls["move-group:" + PurePosixPath(source).name] += 1
-        self.order.append("move:" + source)
-        self.perform_move(source, target)
-        self.save()
-        flag = ROOT / "crash-move"
-        if flag.exists() and flag.read_text() == PurePosixPath(source).name:
-            # Remote completion precedes lost response / container SIGKILL.
-            (ROOT / "move-finished").touch()
-            await asyncio.Event().wait()
+        raise AssertionError("in-place scraping must never MOVE")
 
 
 class Metadata(TVMetadata):

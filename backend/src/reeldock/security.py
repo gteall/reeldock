@@ -78,17 +78,6 @@ class SettingsStore:
                 elif not getattr(update, name) or not getattr(update, name).get_secret_value():
                     value[name] = getattr(previous, name) if previous else None
             config = AppConfig.model_validate(value)
-            if previous and any(
-                getattr(config, key) != getattr(previous, key)
-                for key in (
-                    "webdav_url",
-                    "webdav_username",
-                    "webdav_password",
-                    "input_path",
-                    "output_path",
-                )
-            ):
-                config.move_verified = False
             encrypted = self.vault.seal(config)
             if row:
                 row.revision += 1
@@ -114,8 +103,8 @@ class SettingsStore:
 
 
 def init_admin(db, username: str, password: str):
-    if not username.strip() or len(username) > 128 or len(password) < 12:
-        raise ValueError("用户名不能为空，密码至少 12 位")
+    if not username.strip() or len(username) > 128 or len(password) < 8:
+        raise ValueError("用户名不能为空，密码至少 8 位")
     hashed = passwords.hash(password)
     with db.sessions.begin() as session:
         if session.scalar(select(Admin)):

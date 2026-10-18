@@ -22,6 +22,8 @@ import {
 } from 'antd'
 import {
   ApartmentOutlined,
+  PlusOutlined,
+  MinusCircleOutlined,
   CheckCircleOutlined,
   CloudServerOutlined,
   AppstoreOutlined,
@@ -52,7 +54,7 @@ const stageNames: Record<string, string> = {
   base_assets_verified: '基础资产远程验证',
   subtitle_policy: '字幕策略',
   final_manifest: '最终清单',
-  archive: '安全归档',
+  archive: '旧版归档（已停用）',
 }
 const stateNames: Record<string, string> = {
   queued: '排队中',
@@ -62,6 +64,7 @@ const stateNames: Record<string, string> = {
   blocked: '已阻塞',
   failed: '失败',
   completed: '已完成',
+  skipped: '已跳过',
   pending: '未开始',
 }
 const colors: Record<string, string> = {
@@ -105,7 +108,7 @@ function LoginPage({ onLogin }: { onLogin: (value: Session) => void }) {
         </h1>
         <p>从元数据到随片资产，影坞为你的远程媒体库建立有序、可恢复的工作流。</p>
         <div className="login-phases">
-          TMDB 匹配 <span>→</span> 基础资产 <span>→</span> 字幕 <span>→</span> 归档
+          TMDB 匹配 <span>→</span> 基础资产 <span>→</span> 字幕 <span>→</span> 完成
         </div>
       </div>
       <Card className="login-card">
@@ -168,12 +171,15 @@ function SettingsPage() {
   const { message } = AntApp.useApp()
   const query = useQuery({ queryKey: ['config'], queryFn: () => api<Config>('/config') })
   const checkKey = useRef<string | null>(null)
+  const actorImages = Form.useWatch('scrape_actor_images', form)
   useEffect(() => {
     if (query.data)
       form.setFieldsValue({
         http_timeout_seconds: 15,
         stable_seconds: 600,
         actor_limit: 20,
+        scrape_actor_images: false,
+        scrape_paths: ['/incoming'],
         actor_policy: 'available_only',
         probe_timeout_seconds: 45,
         ...query.data,
@@ -276,15 +282,52 @@ function SettingsPage() {
           <Form.Item name="clear_webdav_password" valuePropName="checked">
             <Checkbox>清除已保存密码</Checkbox>
           </Form.Item>
-          <div className="field-pair">
-            <Form.Item name="input_path" label="待刮削目录" rules={[{ required: true }]}>
-              <Input placeholder="/incoming" />
-            </Form.Item>
-            <Form.Item name="output_path" label="已刮削目录" rules={[{ required: true }]}>
-              <Input placeholder="/library" />
-            </Form.Item>
-          </div>
-          <Text type="secondary">两个目录必须分离，不能相同或互相包含。连接检查只列目录。</Text>
+          <Form.Item
+            label="刮削目录"
+            extra="可添加多个目录，NFO、海报、字幕等直接保存在对应媒体目录中。"
+          >
+            <Form.List
+              name="scrape_paths"
+              rules={[
+                {
+                  validator: async (_, paths) => {
+                    if (!paths?.length) throw new Error('请至少添加一个刮削目录')
+                  },
+                },
+              ]}
+            >
+              {(fields, { add, remove }, { errors }) => (
+                <>
+                  {fields.map((field, index) => (
+                    <div className="scrape-directory-row" key={field.key}>
+                      <Form.Item
+                        name={field.name}
+                        rules={[{ required: true, whitespace: true, message: '请输入刮削目录' }]}
+                      >
+                        <Input aria-label={`刮削目录 ${index + 1}`} placeholder="/movies" />
+                      </Form.Item>
+                      <Button
+                        aria-label={`移除刮削目录 ${index + 1}`}
+                        icon={<MinusCircleOutlined />}
+                        disabled={fields.length === 1}
+                        onClick={() => remove(field.name)}
+                      />
+                    </div>
+                  ))}
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    disabled={fields.length >= 32}
+                    onClick={() => add('')}
+                  >
+                    添加刮削目录
+                  </Button>
+                  <Form.ErrorList errors={errors} />
+                </>
+              )}
+            </Form.List>
+          </Form.Item>
+          <Text type="secondary">连接检查会逐一验证已保存目录。每部电影或剧集使用独立目录。</Text>
         </Card>
         <Card title="元数据与网络" className="form-card">
           <Form.Item
@@ -333,11 +376,18 @@ function SettingsPage() {
           >
             <InputNumber min={1} max={86400} />
           </Form.Item>
+          <Form.Item name="scrape_actor_images" valuePropName="checked">
+            <Checkbox>刮削演员头像（默认关闭）</Checkbox>
+          </Form.Item>
+          <Paragraph type="secondary">
+            关闭时仍保留演员姓名、角色等信息，不下载或生成演员头像。
+          </Paragraph>
           <Form.Item name="actor_limit" label="演员范围" extra="默认前 20 位；0 表示全部。">
-            <InputNumber min={0} max={500} />
+            <InputNumber min={0} max={500} disabled={!actorImages} />
           </Form.Item>
           <Form.Item name="actor_policy" label="头像要求">
             <Segmented
+              disabled={!actorImages}
               options={[
                 { label: '仅来源有图者必需', value: 'available_only' },
                 { label: '所选演员必须有图', value: 'strict' },
@@ -367,15 +417,7 @@ function SettingsPage() {
             <Input />
           </Form.Item>
         </Card>
-        <Card title="归档范围确认" className="form-card">
-          <Form.Item name="move_verified" valuePropName="checked">
-            <Checkbox>
-              已在当前输入/输出对应的同一存储驱动范围验证目录 MOVE 和 Overwrite:F 冲突保护
-            </Checkbox>
-          </Form.Item>
-          <Paragraph type="secondary">
-            默认关闭。请先用专用测试目录验证；更换地址、凭证或输入/输出路径后此确认自动失效。存储范围未验证时，任务保留刮削结果并阻塞归档。
-          </Paragraph>
+        <Card title="字幕下载来源" className="form-card">
           <Form.Item
             name="subtitle_download_hosts_text"
             label="射手字幕下载主机"
@@ -413,16 +455,13 @@ function SettingsPage() {
               匹配 TMDB <small>保留 original_language</small>
             </li>
             <li>
-              基础资产远程验证 <small>NFO · 海报 · 背景 · 演员头像</small>
+              基础资产远程验证 <small>NFO · 海报 · 背景 · 可选演员头像</small>
             </li>
             <li>
               字幕策略 <small>中文作品直接跳过探测</small>
             </li>
             <li>
               最终清单验证 <small>检查完整性与源快照</small>
-            </li>
-            <li>
-              安全归档 <small>需确认存储 MOVE 能力</small>
             </li>
           </ol>
         </Card>
@@ -470,7 +509,7 @@ function TasksPage() {
         type="info"
         showIcon
         className="page-alert"
-        title="连接检查为只读；电影页可提交完整刮削任务。未知移动结果只核对，不盲目重发。"
+        title="连接检查为只读；电影页可提交完整刮削任务，数据直接保存在对应媒体目录。"
       />
       <Card
         title={
@@ -756,7 +795,7 @@ export default function App() {
         <div className="sidebar-bottom">
           <Tag color="cyan">P5 · 发布准备</Tag>
           <p>
-            归档需验证 MOVE 能力 ·{' '}
+            原地刮削 ·{' '}
             {
               { live: '实时连接', connecting: '连接中', reconnecting: '重连中', offline: '离线' }[
                 liveState
@@ -812,7 +851,7 @@ export default function App() {
               <Paragraph type="secondary">
                 {page === 'posters'
                   ? filmId
-                    ? '影片资料、随片资产与刮削归档记录。'
+                    ? '影片资料、随片资产与刮削结果。'
                     : '已刮削的电影与剧集，一目了然。点击海报，发现更多影片信息。'
                   : page === 'about'
                     ? '版本、数据来源与使用说明。'

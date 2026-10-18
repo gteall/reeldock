@@ -53,7 +53,6 @@ class Worker:
         self.handlers = {
             "subtitle_policy": self.completion.subtitle,
             "final_manifest": self.completion.manifest,
-            "archive": self.completion.archive,
             **self.handlers,
         }
         self.slots: list[asyncio.Task] = []
@@ -64,15 +63,13 @@ class Worker:
         if not config or revision != claim.config_revision:
             raise ProviderError("configuration_changed_submit_new_task")
         async with self.storage_factory(config) as storage:
-            input_entries = await storage.list(config.input_path)
-            output_entries = await storage.list(config.output_path)
+            counts = [len(await storage.list(path)) for path in config.scrape_paths]
         # No filenames, server addresses or credentials in events/checkpoints.
         return {
-            "input_entries": len(input_entries),
-            "output_entries": len(output_entries),
+            "directories": len(counts),
+            "entries": sum(counts),
             "mode": "read_only",
             "writes_tested": False,
-            "move_tested": False,
         }
 
     async def heartbeat(self, claim: Claim, job: asyncio.Task):
@@ -90,17 +87,12 @@ class Worker:
             stage = self.queue.begin_step(claim)
             if stage is None:
                 return
-            if stage == "archive":
-                config, _ = self.settings.load()
-                # Even an injected handler cannot bypass the operator's capability gate.
-                if not config.move_verified:
-                    raise ProviderError("move_capability_unverified")
             handler = self.handlers.get(stage)
             if handler is None:
                 raise ProviderError("stage_not_implemented_p1")
             checkpoint = await handler(replace(claim, stage=stage))
             self.queue.finish_step(claim, stage, checkpoint)
-            if stage in {"connection_check", "scan", "asset_retry", "archive"} or (
+            if stage in {"connection_check", "scan", "asset_retry", "final_manifest"} or (
                 claim.kind == "movie_base" and stage == "base_assets_verified"
             ):
                 return

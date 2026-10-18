@@ -63,7 +63,7 @@ def test_real_worker_connection_task_and_restart(runtime, config_body):
         assert restarted.get(f"/api/tasks/{task_id}").json()["status"] == "completed"
         assert restarted.get("/api/config").json()["configured"]
         assert restarted.get("/api/events").json()["next_cursor"] > 0
-    assert calls == ["/incoming", "/library"]
+    assert calls == ["/incoming"]
 
 
 def test_connection_failure_is_safe_and_persisted(client, config_body):

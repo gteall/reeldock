@@ -29,10 +29,7 @@ async def test_full_task_api_states_and_authenticated_manifest(runtime, config_b
         client.headers.update(
             {"Origin": "http://localhost:8000", "X-CSRF-Token": response.json()["csrf_token"]}
         )
-        assert (
-            client.put("/api/config", json={**config_body, "move_verified": True}).status_code
-            == 200
-        )
+        assert client.put("/api/config", json={**config_body}).status_code == 200
         config, revision = app.state.store.load()
         await app.state.worker.movies.scanner.scan(dav, config, revision, now=time.time() - 601)
         await app.state.worker.movies.scanner.scan(dav, config, revision)
@@ -47,29 +44,14 @@ async def test_full_task_api_states_and_authenticated_manifest(runtime, config_b
         movie = client.get("/api/movies").json()["items"][0]
         assert movie["subtitle_status"] == "skipped_tmdb_chinese"
         assert movie["probe_status"] == "not_started" and movie["probe_evidence"] == {}
-        assert movie["archive_status"] == "archived"
-        assert movie["archive_intent"]["status"] == "archived"
+        assert movie["scrape_completed"] and movie["path"] == body["package_path"]
+        assert movie["archive_intent"] is None and not dav.calls["move"]
         manifest = next(a for a in movie["assets"] if a["kind"] == "manifest" and a["required"])
         assert client.get(manifest["preview"]).json()["package_id"] == movie["id"]
         assert (
             client.put("/api/movies/" + movie["id"] + "/match", json={"tmdb_id": "124"}).status_code
-            == 409
+            == 200
         )
         client.post("/api/auth/logout")
         assert client.get(manifest["preview"]).status_code == 401
         assert not probe.calls and not shooter.calls
-
-
-def test_move_scope_ack_invalidates_on_path_change(client, config_body):
-    client.put("/api/config", json={**config_body, "move_verified": True})
-    assert client.get("/api/config").json()["move_verified"] is True
-    client.put(
-        "/api/config",
-        json={
-            **config_body,
-            "expected_revision": 1,
-            "input_path": "/new-input",
-            "move_verified": True,
-        },
-    )
-    assert client.get("/api/config").json()["move_verified"] is False

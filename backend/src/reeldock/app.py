@@ -171,9 +171,7 @@ def create_app(
     def health():
         with app.state.db.sessions.begin() as session:
             session.execute(text("SELECT 1"))
-            row = session.get(Configuration, 1)
-            enabled = bool(row and app.state.store.vault.open(row.encrypted).move_verified)
-        return {"status": "ok", "version": __version__, "phase": "P5", "archive_enabled": enabled}
+        return {"status": "ok", "version": __version__, "phase": "P5", "mode": "in_place"}
 
     @app.get("/api/auth/status")
     def auth_status():
@@ -286,21 +284,8 @@ def create_app(
             path = normalize_path(body.package_path)
         except ValueError:
             raise HTTPException(422, "invalid_package_path") from None
-        if not path.startswith(config.input_path + "/"):
-            raise HTTPException(422, "package_must_be_below_input_directory")
-        with app.state.db.sessions.begin() as session:
-            package = session.scalar(select(Package).where(Package.remote_path == path))
-            repeated = session.scalar(
-                select(Task.id).where(Task.idempotency_key == body.idempotency_key)
-            )
-            if (
-                package
-                and not repeated
-                and session.scalar(
-                    select(ArchiveIntent.id).where(ArchiveIntent.package_id == package.id)
-                )
-            ):
-                raise HTTPException(409, "archive_existing_intent_requires_recovery")
+        if config.root_for(path) is None:
+            raise HTTPException(422, "package_outside_scrape_directories")
         try:
             task_id = app.state.queue.submit(body.kind, path, body.idempotency_key, revision)
         except ValueError:
@@ -364,15 +349,28 @@ def create_app(
             .order_by(ArchiveIntent.created_at.desc())
             .limit(1)
         )
-        config_row = session.get(Configuration, 1)
-        config = app.state.store.vault.open(config_row.encrypted) if config_row else None
         current_probe = (
             media
             and media.probe_evidence.get("context_version") == package.context_version
             and package.subtitle_status != "skipped_tmdb_chinese"
         )
+        config_row = session.get(Configuration, 1)
+        config = app.state.store.vault.open(config_row.encrypted) if config_row else None
         return {
             "id": package.id,
+            "actor_images_enabled": bool(config and config.scrape_actor_images),
+            "scrape_completed": bool(
+                package.manifest_version == package.context_version
+                and package.base_status == "remote_verified"
+                and package.subtitle_version == package.context_version
+                and any(
+                    asset.kind == "manifest"
+                    and asset.required
+                    and asset.status == "remote_verified"
+                    and asset.verified_version == package.context_version
+                    for asset in assets
+                )
+            ),
             "kind": package.kind,
             "context_version": package.context_version,
             "lease_active": bool(package.lease_owner and (package.lease_until or 0) > time.time()),
@@ -436,7 +434,7 @@ def create_app(
             }
             if intent
             else None,
-            "archive_enabled": bool(config and config.move_verified),
+            "archive_enabled": False,
             "error_code": row.error_code or (latest.error_code if latest else None),
             "task_id": latest.id if latest else None,
             "task_status": latest.status if latest else None,
@@ -506,10 +504,6 @@ def create_app(
             row, package = session.get(MovieRecord, package_id), session.get(Package, package_id)
             if not row or not package:
                 raise HTTPException(404, "movie_not_found")
-            if session.scalar(
-                select(ArchiveIntent.id).where(ArchiveIntent.package_id == package.id)
-            ):
-                raise HTTPException(409, "archive_existing_intent_requires_recovery")
             if package.lease_owner and (package.lease_until or 0) > time.time():
                 raise HTTPException(409, "package_busy_pause_first")
             if body.tmdb_id != package.tmdb_id:
@@ -533,10 +527,6 @@ def create_app(
                 raise HTTPException(404, "episode_not_found")
             if body.expected_context_version != package.context_version:
                 raise HTTPException(409, "context_changed_submit_new_task")
-            if session.scalar(
-                select(ArchiveIntent.id).where(ArchiveIntent.package_id == package.id)
-            ):
-                raise HTTPException(409, "archive_existing_intent_requires_recovery")
             if package.lease_owner and (package.lease_until or 0) > time.time():
                 raise HTTPException(409, "package_busy_pause_first")
             try:
@@ -638,13 +628,9 @@ def create_app(
                 "thumb",
             }:
                 raise HTTPException(404, "asset_retry_not_allowed")
+            if asset.kind == "actor" and not config.scrape_actor_images:
+                raise HTTPException(409, "actor_images_disabled")
             package = session.get(Package, asset.package_id)
-            if session.scalar(
-                select(ArchiveIntent.id).where(
-                    ArchiveIntent.package_id == package.id, ArchiveIntent.status != "archived"
-                )
-            ):
-                raise HTTPException(409, "archive_existing_intent_requires_recovery")
             if package.lease_owner and (package.lease_until or 0) > time.time():
                 raise HTTPException(409, "package_busy_pause_first")
             if package.source_snapshot.get("config_revision") != revision:

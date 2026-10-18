@@ -41,9 +41,7 @@ async def test_http_worker_sse_disconnect_replay_and_state_refetch(runtime, conf
                     await asyncio.sleep(0.02)
                 assert server.started
                 init_admin(app.state.db, "admin", "p4-http-test-password")
-                app.state.store.save(
-                    ConfigUpdate(**{**config_body, "stable_seconds": 1, "move_verified": True})
-                )
+                app.state.store.save(ConfigUpdate(**{**config_body, "stable_seconds": 1}))
                 auth = await client.post(
                     "/api/auth/login",
                     json={"username": "admin", "password": "p4-http-test-password"},
@@ -87,7 +85,7 @@ async def test_http_worker_sse_disconnect_replay_and_state_refetch(runtime, conf
                             assert int(line[4:]) > cursor
                             break
                 refreshed = (await client.get("/api/packages")).json()["items"][0]
-                assert refreshed["archive_status"] == "archived"
+                assert refreshed["scrape_completed"]
                 assert len(refreshed["media"]) == 2
                 assert all(
                     m["subtitle_status"] == "skipped_tmdb_chinese" for m in refreshed["media"]

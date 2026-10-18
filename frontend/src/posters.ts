@@ -19,8 +19,8 @@ export function posterPackages(
   return scrapedPackages(items)
     .filter((film) => {
       if (kind !== 'all' && film.kind !== kind) return false
-      if (state === 'archived' && film.archive_status !== 'archived') return false
-      if (state === 'unarchived' && film.archive_status === 'archived') return false
+      if (state === 'completed' && !film.scrape_completed) return false
+      if (state === 'partial' && film.scrape_completed) return false
       return [
         film.title,
         film.year,

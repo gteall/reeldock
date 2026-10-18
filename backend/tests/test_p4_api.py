@@ -42,10 +42,7 @@ def tv_app(runtime, config_body, files=None):
             {"Origin": "http://localhost:8000", "X-CSRF-Token": result.json()["csrf_token"]}
         )
         assert (
-            client.put(
-                "/api/config", json={**config_body, "stable_seconds": 1, "move_verified": True}
-            ).status_code
-            == 200
+            client.put("/api/config", json={**config_body, "stable_seconds": 1}).status_code == 200
         )
         yield app, client, dav, metadata, probe, shooter
 
@@ -95,7 +92,7 @@ async def test_manual_mapping_stale_duplicate_and_resume(runtime, config_body):
         )
         await app.state.worker.execute(app.state.queue.claim("api-tv"))
         view = client.get("/api/packages/" + package["id"]).json()
-        assert view["archive_status"] == "archived" and not view["lease_active"]
+        assert view["scrape_completed"] and not view["lease_active"]
         assert {m["subtitle_status"] for m in view["media"]} == {"skipped_tmdb_chinese"}
         assert all(m["probe_status"] == "not_started" for m in view["media"])
         for kind in ["nfo", "season_poster", "thumb"]:

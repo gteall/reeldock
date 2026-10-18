@@ -43,8 +43,7 @@ def main():
         SettingsStore(db, Vault(args.data_dir)).save(
             ConfigUpdate(
                 webdav_url="https://dav.example/dav/",
-                input_path="/incoming",
-                output_path="/library",
+                scrape_paths=["/incoming"],
                 tmdb_token="mock-only-token",
                 stable_seconds=1,
             )

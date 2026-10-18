@@ -41,8 +41,7 @@ async def tmdb(values):
                 db.migrate()
                 config = AppConfig(
                     webdav_url="https://dav.example/dav/",
-                    input_path="/input",
-                    output_path="/output",
+                    scrape_paths=["/input"],
                     tmdb_token=values["token"],
                     tmdb_proxy_url=values.get("tmdb_proxy_url"),
                     http_timeout_seconds=12,
@@ -69,8 +68,7 @@ async def shooter():
     try:
         config = AppConfig(
             webdav_url="https://dav.example/dav/",
-            input_path="/input",
-            output_path="/output",
+            scrape_paths=["/input"],
             http_timeout_seconds=15,
         )
         async with ShooterProvider(config) as provider:

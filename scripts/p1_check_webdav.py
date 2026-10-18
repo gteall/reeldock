@@ -24,8 +24,7 @@ async def check(values):
         webdav_url=values["P0_WEBDAV_URL"],
         webdav_username=values.get("P0_WEBDAV_USERNAME") or "",
         webdav_password=values.get("P0_WEBDAV_PASSWORD"),
-        input_path="/p1-config-input",
-        output_path="/p1-config-output",
+        scrape_paths=["/p1-config-input"],
         http_timeout_seconds=float(values.get("P0_TIMEOUT_SECONDS") or 15),
     )
     results = []

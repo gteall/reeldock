@@ -51,7 +51,7 @@ async def test_chinese_series_entire_package_zero_probe(foundation, tmp_path, la
     assert task.status == "completed", task.error_code
     assert package.kind == "tv" and package.subtitle_status == "skipped_tmdb_chinese"
     assert not probe.calls and not shooter.calls and dav.calls["media_reads"] == 0
-    assert dav.calls["move"] == 1
+    assert dav.calls["move"] == 0
     assert (
         read_nfo(dav.files[package.remote_path + "/tvshow.nfo"], "tvshow").find("streamdetails")
         is None
@@ -90,7 +90,7 @@ async def test_shared_image_failure_blocks_every_episode_and_reuses_base(foundat
         assert session.get(Task, task.id).status == "completed"
     assert all(dav.calls[k] == v for k, v in puts.items())
     assert dav.order.index("readback:poster.jpg") < dav.order.index("probe")
-    assert dav.calls["move"] == 1
+    assert dav.calls["move"] == 0
 
 
 async def test_one_missing_subtitle_keeps_package_then_retry_skips_successful_episode(
@@ -116,7 +116,7 @@ async def test_one_missing_subtitle_keeps_package_then_retry_skips_successful_ep
     assert metadata.calls == before and all(dav.calls[k] == v for k, v in puts.items())
     assert all(v == 1 for v in probe.media_calls.values())
     assert shooter.queries["Example.S01E01.mkv"] == shooter.queries["Example.S01E02.mkv"] == 1
-    assert dav.calls["move"] == 1
+    assert dav.calls["move"] == 0
 
 
 async def test_existing_target_series_is_never_merged(foundation, tmp_path):
@@ -125,7 +125,7 @@ async def test_existing_target_series_is_never_merged(foundation, tmp_path):
     dav.directories.add("/library/Example (2020)")
     dav.files["/library/Example (2020)/user.txt"] = b"keep"
     task, _ = await run_tv(env)
-    assert task.error_code == "archive_target_conflict"
+    assert task.status == "completed" and task.error_code is None
     assert dav.calls["move"] == 0 and dav.files["/library/Example (2020)/user.txt"] == b"keep"
     assert any(p.startswith(ROOT) for p in dav.media)
 
@@ -183,7 +183,7 @@ async def test_all_episodes_and_shared_assets_read_back_before_first_probe(found
     assert len(manifest["media"]) == 2
 
 
-async def test_enhancement_http_failure_is_independent_and_can_retry_after_archive(
+async def test_enhancement_http_failure_is_independent_and_can_retry_after_completion(
     foundation, tmp_path
 ):
     env = await setup_tv(foundation, tmp_path)
@@ -252,24 +252,6 @@ async def test_any_required_asset_failure_keeps_all_episodes_unprobed(foundation
     assert task.status == "blocked", task.error_code
     assert not env[5].calls and not env[6].calls and not env[3].calls["media_reads"]
     assert not env[3].calls["move"]
-
-
-async def test_series_move_crash_recovers_without_second_move(foundation, tmp_path):
-    import time
-
-    env = await setup_tv(foundation, tmp_path)
-    db, _, queue, dav, _, probe, _, worker, revision = env
-    dav.move_mode = "crash"
-    task_id = queue.submit("package_pipeline", ROOT, "crash-tv", revision)
-    claim = queue.claim("crashed")
-    await worker.execute(claim)
-    with db.sessions.begin() as session:
-        session.get(Package, claim.package_id).lease_until = time.time() - 1
-    queue.recover()
-    await worker.execute(queue.claim("restarted"))
-    with db.sessions.begin() as session:
-        assert session.get(Task, task_id).status == "completed"
-    assert dav.calls["move"] == 1 and not probe.calls
 
 
 async def test_specials_and_chinese_seasons_share_one_package(foundation, tmp_path):
@@ -342,88 +324,20 @@ async def test_new_episode_during_base_stage_invalidates_package_before_probe(fo
     assert not env[5].calls and not env[6].calls and not dav.calls["move"]
 
 
-async def test_move_reconciles_changed_etags_for_fully_verified_enhancements(foundation, tmp_path):
-    env = await setup_tv(foundation, tmp_path)
-    dav = env[3]
-    entry = dav.entry
-
-    def moved_entry(path):
-        value = entry(path)
-        if path.startswith("/library/") and path.endswith(".jpg"):
-            value.etag = "new-driver-metadata"
-        return value
-
-    dav.entry = moved_entry
-    task, _ = await run_tv(env)
-    assert task.status == "completed", task.error_code
-    assert dav.calls["move"] == 1 and not env[5].calls
-
-
-async def test_older_manifest_uses_bound_pre_move_enhancement_evidence(
-    foundation, tmp_path, monkeypatch
+async def test_changed_enhancement_bytes_are_rejected_before_completing_manifest(
+    foundation, tmp_path
 ):
-    import reeldock.completion as completion
-
-    canonical = completion.canonical
-
-    def legacy(value):
-        if "inventory" in value:
-            value = {
-                **value,
-                "assets": [
-                    a for a in value["assets"] if a["kind"] not in {"thumb", "season_poster"}
-                ],
-            }
-        return canonical(value)
-
-    monkeypatch.setattr(completion, "canonical", legacy)
     env = await setup_tv(foundation, tmp_path)
-    dav = env[3]
-    entry = dav.entry
+    worker = env[7]
+    subtitle = worker.handlers[Stage.SUBTITLE]
 
-    def moved(path):
-        value = entry(path)
-        if path.startswith("/library/") and path.endswith(".jpg"):
-            value.etag = "changed"
-        return value
+    async def corrupt_after_subtitle(claim):
+        result = await subtitle(claim)
+        env[3].files[ROOT + "/season01-poster.jpg"] = b"corrupt"
+        return result
 
-    dav.entry = moved
+    worker.handlers[Stage.SUBTITLE] = corrupt_after_subtitle
     task, _ = await run_tv(env)
-    assert task.status == "completed", task.error_code
-    assert dav.calls["move"] == 1
-
-
-async def test_changed_enhancement_bytes_are_never_excused_by_etag_relaxation(foundation, tmp_path):
-    env = await setup_tv(foundation, tmp_path)
-    dav = env[3]
-    move = dav.move
-
-    async def corrupt_after_move(source, target):
-        await move(source, target)
-        dav.files[target + "/season01-poster.jpg"] = b"corrupt"
-
-    dav.move = corrupt_after_move
-    task, package = await run_tv(env)
-    assert task.status == "blocked" and package.archive_status == "move_unknown"
-    assert dav.calls["move"] == 1 and not env[5].calls
-
-
-async def test_pre_p4_movie_snapshot_can_finish_protected_archive(foundation, tmp_path):
-    from p3_support import run, setup
-
-    env = await setup(foundation, tmp_path, original="zh")
-    db, _, _, _, _, _, _, worker, _ = env
-    archive = worker.handlers["archive"]
-
-    async def legacy(claim):
-        with db.sessions.begin() as session:
-            package = session.get(Package, claim.package_id)
-            package.source_snapshot = {
-                k: v for k, v in package.source_snapshot.items() if k != "kind"
-            }
-        return await archive(claim)
-
-    worker.handlers["archive"] = legacy
-    task, package = await run(env)
-    assert task.status == "completed", task.error_code
-    assert package.archive_status == "archived"
+    assert task.status == "blocked" and task.stage == Stage.MANIFEST
+    assert task.error_code == "upload_verification_failed"
+    assert not env[3].calls["move"] and not env[5].calls

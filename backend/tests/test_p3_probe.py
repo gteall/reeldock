@@ -11,9 +11,7 @@ from reeldock.subtitles import default_audio, simplified_track, validate_subtitl
 
 
 def configuration(**changes):
-    return AppConfig(
-        webdav_url="https://dav.example/dav/", input_path="/in", output_path="/out", **changes
-    )
+    return AppConfig(webdav_url="https://dav.example/dav/", scrape_paths=["/in"], **changes)
 
 
 async def test_gateway_budget_and_opaque_url():

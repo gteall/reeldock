@@ -8,7 +8,7 @@ from sqlalchemy import select
 from reeldock.domain import ProviderError
 from reeldock.episodes import episode_hint, parse_episode, season_folder
 from reeldock.matching import TEMP_PATTERN, VIDEO_EXTENSIONS, parse_name
-from reeldock.models import ArchiveIntent, Asset, Media, MovieRecord, Package, SeasonRecord
+from reeldock.models import Asset, Media, MovieRecord, Package, SeasonRecord
 from reeldock.queue import revise_package
 
 IGNORED = {"sample", "samples", "extras", "trailers"}
@@ -31,8 +31,6 @@ def source_snapshot(entries):
 
 
 def package_reason(path, root, entries, videos, kind=None, mappings=None):
-    if path == root:
-        return "loose_media_requires_directory"
     if any(TEMP_PATTERN.search(e.path) for e in entries):
         return "download_in_progress"
     if not videos or any(e.size is None or e.size <= 0 for e in videos):
@@ -110,13 +108,17 @@ class Scanner:
 
     async def scan(self, storage, config, revision, *, check=lambda: None, now=None):
         now = time.time() if now is None else now
-        listing = await collect(storage, config.input_path, check)
+        listing = {}
+        for root in config.scan_roots:
+            listing.update(await collect(storage, root, check))
+            if len(listing) > 2000 or sum(map(len, listing.values())) > 20000:
+                raise ProviderError("scan_limit_exceeded")
         candidates, consumed = [], []
         for path, direct in sorted(listing.items(), key=lambda item: (item[0].count("/"), item[0])):
             if any(path.startswith(root + "/") for root in consumed):
                 continue
             videos = media_entries(direct)
-            tv = path != config.input_path and (
+            tv = (
                 any(PurePosixPath(e.path).name.lower() == "tvshow.nfo" for e in direct)
                 or any(
                     e.is_dir and season_folder(PurePosixPath(e.path).name) is not None
@@ -140,12 +142,6 @@ class Scanner:
                     session.add(package)
                     session.flush()
                 seen.add(package.id)
-                if session.scalar(
-                    select(ArchiveIntent.id).where(
-                        ArchiveIntent.package_id == package.id, ArchiveIntent.status != "archived"
-                    )
-                ):
-                    continue
                 snapshot = source_snapshot(entries)
                 snapshot["config_revision"] = revision
                 snapshot["kind"] = kind
@@ -193,14 +189,7 @@ class Scanner:
                         session.add(media)
                     elif media.package_id != package.id:
                         previous = session.get(Package, media.package_id)
-                        if (
-                            previous.lease_owner and (previous.lease_until or 0) > now
-                        ) or session.scalar(
-                            select(ArchiveIntent.id).where(
-                                ArchiveIntent.package_id == previous.id,
-                                ArchiveIntent.status != "archived",
-                            )
-                        ):
+                        if previous.lease_owner and (previous.lease_until or 0) > now:
                             raise ProviderError("legacy_package_requires_recovery")
                         for asset in session.scalars(
                             select(Asset).where(Asset.media_id == media.id)
@@ -238,7 +227,7 @@ class Scanner:
                         media.metadata_version = media.subtitle_version = None
                         media.subtitle_status, media.subtitle_evidence = "pending", {}
                 reason = name_error or package_reason(
-                    path, config.input_path, entries, videos, kind, mappings
+                    path, config.root_for(path), entries, videos, kind, mappings
                 )
                 stable = not changed and now - record.stable_since >= config.stable_seconds
                 record.scan_status = (
@@ -254,6 +243,7 @@ class Scanner:
                         existing.kind
                         in {"nfo", "poster", "fanart", "actor", "season_poster", "thumb"}
                         and existing.status == "remote_verified"
+                        and (existing.kind != "actor" or config.scrape_actor_images)
                     ):
                         if full not in observed:
                             existing.status, package.base_status = "pending", "pending"
@@ -294,15 +284,9 @@ class Scanner:
             for record in session.scalars(select(MovieRecord)):
                 package = session.get(Package, record.package_id)
                 if (
-                    package.remote_path.startswith(config.input_path + "/")
+                    config.root_for(package.remote_path) is not None
                     and package.id not in seen
                     and record.scan_status != "superseded"
-                    and not session.scalar(
-                        select(ArchiveIntent.id).where(
-                            ArchiveIntent.package_id == package.id,
-                            ArchiveIntent.status != "archived",
-                        )
-                    )
                 ):
                     if record.scan_status != "missing":
                         revise_package(session, package, source_snapshot={})

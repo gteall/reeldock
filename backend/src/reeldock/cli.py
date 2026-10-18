@@ -63,7 +63,7 @@ def main():
                     password = (
                         sys.stdin.readline().rstrip("\n")
                         if args.password_stdin
-                        else getpass.getpass("管理员密码（至少12位）: ")
+                        else getpass.getpass("管理员密码（至少8位）: ")
                     )
                     init_admin(db, args.username, password)
                     print("管理员已初始化。")

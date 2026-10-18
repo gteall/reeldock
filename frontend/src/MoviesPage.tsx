@@ -28,6 +28,8 @@ import { directoryTree, visiblePackages } from './library'
 import { Preview, Status } from './MediaAssets'
 
 function assetState(film: Film, kind: string) {
+  if (kind === 'actor' && !film.actor_images_enabled)
+    return <Typography.Text type="secondary">已关闭</Typography.Text>
   const rows = film.assets.filter((a) => a.kind === kind && (a.required || kind !== 'actor'))
   if (!rows.length) return <Typography.Text type="secondary">未检查</Typography.Text>
   if (kind === 'actor')
@@ -101,7 +103,7 @@ export function MoviesPage() {
       }),
     onSuccess: () => {
       refresh()
-      message.success('刮削任务已排队；归档需已验证 MOVE 能力')
+      message.success('刮削任务已排队，结果将保存到原媒体目录')
     },
     onError: error,
   })
@@ -116,14 +118,12 @@ export function MoviesPage() {
       api(`/movies/${id}/match`, { method: 'PUT', body: JSON.stringify({ tmdb_id: tmdbId }) }),
     onSuccess: () => {
       refresh()
-      message.success('选择已保存，请启动刮削并按策略归档；现存 NFO 冲突仍会受保护')
+      message.success('选择已保存，请启动原地刮削；现存 NFO 冲突仍会受保护')
     },
     onError: error,
   })
   const busy = (f: Film) =>
-    f.lease_active ||
-    !!f.archive_intent ||
-    ['running', 'queued', 'retry_wait'].includes(f.task_status ?? '')
+    f.lease_active || ['running', 'queued', 'retry_wait'].includes(f.task_status ?? '')
   const retryAsset = useMutation({
     mutationFn: (a: Asset) =>
       api(`/assets/${a.id}/retry`, {
@@ -169,7 +169,7 @@ export function MoviesPage() {
         type="info"
         showIcon
         title="电影与剧集工作台"
-        description="整包电影或剧集基础必需资产全部远程验证后才处理字幕；中文剧每集零探测。任一集失败保留整包，目标已有目录不覆盖或合并。"
+        description="整包电影或剧集基础必需资产全部远程验证后才处理字幕；中文剧每集零探测。任一集失败保留已完成的刮削结果，所有数据原地保存。"
       />
       <div className="library-layout">
         <Card className="library-tree" title="目录与剧集">
@@ -339,11 +339,6 @@ export function MoviesPage() {
                   render: (_, f) => <Status value={f.subtitle_status} />,
                 },
                 {
-                  title: '归档',
-                  key: 'archive',
-                  render: (_, f) => <Status value={f.archive_status} />,
-                },
-                {
                   title: '任务',
                   key: 'task',
                   render: (_, f) => (f.task_status ? <Status value={f.task_status} /> : '未开始'),
@@ -357,7 +352,7 @@ export function MoviesPage() {
                       disabled={f.scan_status !== 'stable' || busy(f)}
                       onClick={() => start.mutate(f)}
                     >
-                      刮削并按策略归档
+                      原地刮削
                     </Button>
                   ),
                 },
@@ -399,14 +394,6 @@ export function MoviesPage() {
                 },
                 { key: 'sub', label: '字幕', children: <Status value={film.subtitle_status} /> },
                 { key: 'subreason', label: '字幕原因', children: explain(film.subtitle_reason) },
-                { key: 'archive', label: '归档', children: <Status value={film.archive_status} /> },
-                {
-                  key: 'capability',
-                  label: 'MOVE 能力',
-                  children: film.archive_enabled
-                    ? '管理员已确认当前范围'
-                    : '未验证 · 停留在刮削完成',
-                },
               ]}
             />
             {film.error_code && <Alert type="warning" showIcon title={explain(film.error_code)} />}
@@ -416,7 +403,7 @@ export function MoviesPage() {
                 disabled={film.scan_status !== 'stable' || busy(film)}
                 onClick={() => start.mutate(film)}
               >
-                启动刮削并按策略归档
+                启动原地刮削
               </Button>
               {film.task_id &&
                 ['failed', 'blocked', 'retry_wait'].includes(film.task_status ?? '') && (
@@ -506,20 +493,6 @@ export function MoviesPage() {
                 ]}
               />
             </Card>
-            {film.archive_intent && (
-              <Alert
-                type="info"
-                title={`归档意图 ${film.archive_intent.id}`}
-                description={
-                  <>
-                    <span>{explain(film.archive_intent.error_code)}</span>
-                    {film.archive_intent.failed_paths?.length ? (
-                      <pre>{film.archive_intent.failed_paths.join('\n')}</pre>
-                    ) : null}
-                  </>
-                }
-              />
-            )}
             <Card title="资产与最终清单 · 上传后完整读回验证">
               <Table<Asset>
                 size="small"
@@ -550,7 +523,7 @@ export function MoviesPage() {
                         size="small"
                         disabled={
                           film.lease_active ||
-                          (film.archive_intent && film.archive_intent.status !== 'archived') ||
+                          (a.kind === 'actor' && !film.actor_images_enabled) ||
                           !['failed', 'source_no_image', 'existing_unverified', 'pending'].includes(
                             a.status,
                           ) ||
@@ -576,7 +549,11 @@ export function MoviesPage() {
               />
             </Card>
             <Card
-              title={`演员 · ${film.cast.filter((p) => p.selected).length} / ${film.cast.length} 纳入头像要求`}
+              title={
+                film.actor_images_enabled
+                  ? `演员 · ${film.cast.filter((p) => p.selected).length} / ${film.cast.length} 纳入头像要求`
+                  : `演员信息 · ${film.cast.length} 位 · 头像刮削已关闭`
+              }
             >
               <div className="actors-grid">
                 {film.cast.map((person) => {

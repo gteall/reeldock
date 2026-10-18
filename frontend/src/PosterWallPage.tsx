@@ -60,13 +60,13 @@ export function PosterWallPage({
           onChange={(event) => change('search')(event.target.value)}
         />
         <Select
-          aria-label="归档状态"
+          aria-label="刮削状态"
           value={state}
           onChange={change('state')}
           options={[
-            { label: '全部归档状态', value: 'all' },
-            { label: '已归档', value: 'archived' },
-            { label: '尚未归档', value: 'unarchived' },
+            { label: '全部刮削状态', value: 'all' },
+            { label: '全部完成', value: 'completed' },
+            { label: '基础已完成', value: 'partial' },
           ]}
         />
         <Select
@@ -170,8 +170,8 @@ export function PosterWallPage({
                       {film.year ?? '年份未知'}
                       {film.metadata.genres[0] ? ` · ${film.metadata.genres[0]}` : ''}
                     </span>
-                    <span className={film.archive_status === 'archived' ? 'poster-archived' : ''}>
-                      {film.archive_status === 'archived' ? '已归档' : '已刮削'}
+                    <span className={film.scrape_completed ? 'poster-completed' : ''}>
+                      {film.scrape_completed ? '全部完成' : '基础已刮削'}
                     </span>
                   </div>
                 </a>

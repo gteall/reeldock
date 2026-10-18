@@ -7,14 +7,11 @@ import pytest
 
 from reeldock.domain import AppConfig, ProviderError
 from reeldock.providers.shooter import ShooterProvider
-from reeldock.providers.webdav import WebDAVProvider
 from reeldock.subtitles import fingerprint, matches_external, validate_subtitle
 
 
 def config(**changes):
-    return AppConfig(
-        webdav_url="https://dav.example/dav/", input_path="/in", output_path="/out", **changes
-    )
+    return AppConfig(webdav_url="https://dav.example/dav/", scrape_paths=["/in"], **changes)
 
 
 async def test_fingerprint_offsets_match_local():
@@ -107,43 +104,6 @@ async def test_bad_shooter_json(body, code):
     ) as provider:
         with pytest.raises(ProviderError, match=code):
             await provider.search(";".join(["a" * 32] * 4))
-
-
-@pytest.mark.parametrize(
-    "status,body,expected",
-    [
-        (204, b"", None),
-        (
-            207,
-            b'<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/in/M/file</d:href>'
-            b"<d:status>HTTP/1.1 423 Locked</d:status></d:response></d:multistatus>",
-            "storage_move_partial_failure",
-        ),
-        (207, b"<xml>bad</xml>", "storage_invalid_multistatus"),
-        (501, b"", "storage_move_unsupported"),
-    ],
-)
-async def test_move_overwrite_and_multistatus(status, body, expected):
-    requests = []
-
-    def transport(request):
-        requests.append(request)
-        if request.method == "PROPFIND":
-            return httpx.Response(404)
-        assert request.method == "MOVE"
-        assert request.headers["Overwrite"] == "F"
-        assert request.headers["Destination"] == "https://dav.example/dav/out/M"
-        return httpx.Response(status, content=body)
-
-    async with WebDAVProvider(
-        config(move_verified=True), transport=httpx.MockTransport(transport)
-    ) as dav:
-        if expected:
-            with pytest.raises(ProviderError, match=expected):
-                await dav.move("/in/M", "/out/M")
-        else:
-            await dav.move("/in/M", "/out/M")
-    assert len(requests) == 2
 
 
 def test_hans_label_does_not_accept_english_or_traditional_content():

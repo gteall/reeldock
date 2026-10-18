@@ -3,6 +3,7 @@ import { Alert, Empty, Image, Modal, Spin, Tag } from 'antd'
 import type { Asset } from './api'
 
 const names: Record<string, string> = {
+  skipped: '已跳过',
   not_selected: '未纳入本次要求',
   not_needed: '不需要',
   mapped: '编号已确认',
@@ -31,7 +32,7 @@ const names: Record<string, string> = {
   embedded_zh_hans: '完整内置简体 · 免下载',
   external_verified: '已有外挂已验证',
   downloaded_verified: '补充外挂已上传验证',
-  archived: '已归档',
+  archived: '历史已归档',
   sending: '移动中 · 待核对',
   retry_safe: '请求被拒绝 · 可重试',
   move_unknown: '移动结果不明',

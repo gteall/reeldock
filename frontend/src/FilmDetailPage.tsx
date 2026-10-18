@@ -139,12 +139,8 @@ export function FilmDetailPage({ id }: { id: string }) {
                 <span>TMDB · {metadata.votes.toLocaleString('zh-CN')} 人评分</span>
               </div>
             )}
-            <Tag color={film.archive_status === 'archived' ? 'success' : 'cyan'}>
-              {film.archive_status === 'archived'
-                ? '已刮削 · 已归档'
-                : scraped
-                  ? '已刮削 · 尚未归档'
-                  : '刮削尚未完成'}
+            <Tag color={film.scrape_completed ? 'success' : 'cyan'}>
+              {film.scrape_completed ? '刮削完成' : scraped ? '基础已刮削' : '刮削尚未完成'}
             </Tag>
           </div>
         </div>
@@ -226,7 +222,7 @@ export function FilmDetailPage({ id }: { id: string }) {
           },
           {
             key: 'workflow',
-            label: '刮削与归档',
+            label: '刮削结果',
             children: (
               <div className="film-sections">
                 <Card title="刮削结果">
@@ -247,11 +243,6 @@ export function FilmDetailPage({ id }: { id: string }) {
                         key: 'subtitle',
                         label: '字幕策略',
                         children: <Status value={film.subtitle_status} />,
-                      },
-                      {
-                        key: 'archive',
-                        label: '归档状态',
-                        children: <Status value={film.archive_status} />,
                       },
                       {
                         key: 'reason',
@@ -279,42 +270,12 @@ export function FilmDetailPage({ id }: { id: string }) {
                         children: <span className="film-path">{film.path}</span>,
                         span: 2,
                       },
-                      {
-                        key: 'move',
-                        label: 'MOVE 能力',
-                        children: film.archive_enabled
-                          ? '管理员已确认当前范围'
-                          : '尚未确认 · 刮削结果保留',
-                      },
                     ]}
                   />
                 </Card>
                 {film.kind === 'movie' && (
                   <Card title="音轨与字幕探测">
                     <ProbeEvidence item={film} />
-                  </Card>
-                )}
-                {film.archive_intent && (
-                  <Card title="归档记录">
-                    <Descriptions
-                      column={1}
-                      items={[
-                        { key: 'id', label: '归档编号', children: film.archive_intent.id },
-                        {
-                          key: 'status',
-                          label: '状态',
-                          children: <Status value={film.archive_intent.status} />,
-                        },
-                        {
-                          key: 'error',
-                          label: '原因',
-                          children: explain(film.archive_intent.error_code),
-                        },
-                      ]}
-                    />
-                    {!!film.archive_intent.failed_paths?.length && (
-                      <pre>{film.archive_intent.failed_paths.join('\n')}</pre>
-                    )}
                   </Card>
                 )}
               </div>

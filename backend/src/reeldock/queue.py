@@ -327,6 +327,22 @@ class Queue:
                 self._release(task, package)
                 emit(session, "task_paused", task.id)
                 return None
+            if task.stage == Stage.ARCHIVE:
+                # Old databases may still have a queued MOVE step. Finish the verified
+                # scrape without invoking a handler or touching remote paths.
+                gate(session, package, Stage.ARCHIVE)
+                step = session.scalar(
+                    select(TaskStep).where(
+                        TaskStep.task_id == task.id, TaskStep.stage == Stage.ARCHIVE
+                    )
+                )
+                if step:
+                    step.status = "skipped"
+                    step.checkpoint = {"mode": "in_place", "archive_removed": True}
+                task.status, task.error_code = "completed", None
+                self._release(task, package)
+                emit(session, "task_completed", task.id, mode="in_place")
+                return None
             gate(session, package, task.stage)
             if task.kind in {"package_pipeline", "movie_base"}:
                 previous = STAGES[: STAGES.index(Stage(task.stage))]
@@ -379,10 +395,19 @@ class Queue:
             emit(session, "step_completed", task.id, stage=stage)
             if stage == Stage.BASE:
                 package.base_status = "remote_verified"
-            if stage in {"connection_check", "scan", "asset_retry", Stage.ARCHIVE} or (
+            if stage in {"connection_check", "scan", "asset_retry", Stage.MANIFEST} or (
                 task.kind == "movie_base" and stage == Stage.BASE
             ):
-                task.status = "completed"
+                task.status, task.error_code = "completed", None
+                if stage == Stage.MANIFEST:
+                    legacy = session.scalar(
+                        select(TaskStep).where(
+                            TaskStep.task_id == task.id, TaskStep.stage == Stage.ARCHIVE
+                        )
+                    )
+                    if legacy:
+                        legacy.status = "skipped"
+                        legacy.checkpoint = {"mode": "in_place", "archive_removed": True}
                 self._release(task, package)
                 emit(session, "task_completed", task.id)
             else:

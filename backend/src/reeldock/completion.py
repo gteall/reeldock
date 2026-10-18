@@ -1,6 +1,5 @@
-"""P3: explicit base gate -> subtitle evidence -> immutable manifest -> safe MOVE."""
+"""In-place completion: verified base assets -> subtitles -> immutable manifest."""
 
-import asyncio
 import json
 import time
 from pathlib import PurePosixPath
@@ -9,7 +8,7 @@ from sqlalchemy import or_, select
 
 from reeldock.cache import sha256
 from reeldock.domain import ProviderError, Stage
-from reeldock.models import ArchiveIntent, Asset, Media, MovieRecord, Package
+from reeldock.models import Asset, Media, Package
 from reeldock.probe import MediaProbe, validate_vobsub_pair
 from reeldock.providers.shooter import ShooterProvider
 from reeldock.queue import SUBTITLE_PASSED, emit, gate
@@ -28,31 +27,19 @@ def canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
 
-def destination_matches(expected, actual, full_hash_verified):
-    """A full byte hash supersedes ETag/mtime for verified small assets only.
-
-    Media and ordinary attachments retain strict available version comparisons.
-    MOVE can change ETag/mtime even when a small asset's complete bytes match.
-    """
-
-    def comparable(rows):
-        return [
-            {
-                k: v
-                for k, v in row.items()
-                if not (row["path"] in full_hash_verified and k in {"etag", "modified"})
-            }
-            for row in rows
-        ]
-
-    return comparable(expected) == comparable(actual)
-
-
 class CompletionPipeline:
     def __init__(self, movies, *, probe=None, subtitle_factory=ShooterProvider):
         self.movies, self.db, self.queue = movies, movies.db, movies.queue
         self.probe = probe or MediaProbe()
         self.subtitle_factory = subtitle_factory
+
+    async def exists(self, storage, path):
+        try:
+            return await storage.stat(path)
+        except ProviderError as error:
+            if error.code == "storage_not_found":
+                return None
+            raise
 
     def check(self, claim, stage=Stage.SUBTITLE):
         self.movies.check(claim)
@@ -144,7 +131,7 @@ class CompletionPipeline:
                 if relative in controls:
                     continue
                 if len(result) >= 20000 or depth > 8:
-                    raise ProviderError("archive_inventory_limit")
+                    raise ProviderError("manifest_inventory_limit")
                 result.append(
                     {
                         "path": relative,
@@ -647,257 +634,8 @@ class CompletionPipeline:
                     old.required = False
             await self.save_asset(claim, storage, path, "manifest", body)
             if inventory != await self.inventory(claim, storage, package.remote_path):
-                raise ProviderError("source_changed_before_archive")
+                raise ProviderError("source_changed_before_manifest")
             with self.db.sessions.begin() as session:
                 self.queue._owned(session, claim)
                 session.get(Package, package.id).manifest_version = claim.context_version
         return {"sha256": sha256(body), "entries": len(inventory)}
-
-    async def exists(self, storage, path):
-        try:
-            return await storage.stat(path)
-        except ProviderError as error:
-            if error.code == "storage_not_found":
-                return None
-            raise
-
-    def intent_state(self, claim, intent_id, status, error=None):
-        # Does not require an unchanged configuration: an interrupted MOVE must
-        # retain its historical intent even if configuration is edited meanwhile.
-        with self.db.sessions.begin() as session:
-            self.queue._owned(session, claim)
-            intent = session.get(ArchiveIntent, intent_id)
-            intent.status, intent.error_code, intent.updated_at = status, error, time.time()
-            session.get(Package, claim.package_id).archive_status = status
-            emit(session, "archive_" + status, claim.task_id, error_code=error)
-
-    async def reconcile(self, claim, storage, intent):
-        source, target = (
-            await self.exists(storage, intent.source),
-            await self.exists(storage, intent.target),
-        )
-        if source and not target:
-            inventory = await self.inventory(claim, storage, intent.source)
-            manifest = await storage.read_small(
-                intent.source + "/" + intent.snapshot["manifest_path"], MAX_SUBTITLE
-            )
-            if (
-                inventory == intent.snapshot["entries"]
-                and sha256(manifest) == intent.manifest_sha256
-            ):
-                return "source_intact"
-        elif not source and target and target.is_dir:
-            manifest = await storage.read_small(
-                intent.target + "/" + intent.snapshot["manifest_path"], MAX_SUBTITLE
-            )
-            if sha256(manifest) == intent.manifest_sha256:
-                parsed = json.loads(manifest)
-                if (
-                    parsed.get("package_id") == claim.package_id
-                    and parsed.get("context_version") == claim.context_version
-                ):
-                    hashes = {a["path"]: a["sha256"] for a in parsed["assets"]}
-                    # Earlier manifests omitted enhancement hashes. A pre-MOVE full
-                    # readback is usable only when bound to this intent's exact source
-                    # snapshot and context. Never relax media or ordinary attachments.
-                    expected = {e["path"]: e for e in intent.snapshot["entries"]}
-                    with self.db.sessions.begin() as session:
-                        enhancements = list(
-                            session.scalars(
-                                select(Asset).where(
-                                    Asset.package_id == claim.package_id,
-                                    Asset.kind.in_(["season_poster", "thumb"]),
-                                    Asset.status == "remote_verified",
-                                    Asset.verified_version == claim.context_version,
-                                    Asset.remote_verified_at <= intent.created_at,
-                                )
-                            )
-                        )
-                    for asset in enhancements:
-                        entry = expected.get(asset.relative_path)
-                        source = asset.remote_snapshot
-                        if (
-                            entry
-                            and asset.sha256
-                            and source.get("path") == intent.source + "/" + asset.relative_path
-                            and all(
-                                source.get(k) == entry.get(k) for k in ("size", "etag", "modified")
-                            )
-                        ):
-                            hashes.setdefault(asset.relative_path, asset.sha256)
-                    inventory = await self.inventory(claim, storage, intent.target)
-                    if destination_matches(intent.snapshot["entries"], inventory, set(hashes)):
-                        # Full-read all included small assets at the destination.
-                        for path, expected_hash in hashes.items():
-                            self.movies.check(claim)
-                            body = await storage.read_small(
-                                intent.target + "/" + path, 20 * 1024 * 1024
-                            )
-                            if sha256(body) != expected_hash:
-                                return "move_unknown"
-                        return "archived"
-        return "move_unknown"
-
-    async def reconcile_after_request(self, claim, storage, intent):
-        # Read-only bounded backoff for directory-cache visibility. Never retry MOVE here.
-        for delay in (0, 0.25, 1):
-            if delay:
-                await asyncio.sleep(delay)
-            self.movies.check(claim)
-            try:
-                outcome = await self.reconcile(claim, storage, intent)
-            except ProviderError as error:
-                if error.code in {"lease_lost", "pause_requested"}:
-                    raise
-                outcome = "move_unknown"
-            if outcome != "move_unknown":
-                return outcome
-        return "move_unknown"
-
-    async def archive(self, claim):
-        config = self.movies.configuration(claim)
-        self.check(claim, Stage.ARCHIVE)
-        with self.db.sessions.begin() as session:
-            package = session.get(Package, claim.package_id)
-            intent = session.scalar(
-                select(ArchiveIntent)
-                .where(ArchiveIntent.package_id == package.id)
-                .order_by(ArchiveIntent.created_at.desc())
-                .limit(1)
-            )
-            manifest = session.scalar(
-                select(Asset).where(
-                    Asset.package_id == package.id,
-                    Asset.kind == "manifest",
-                    Asset.required.is_(True),
-                )
-            )
-        async with self.movies.storage_factory(config) as storage:
-            if intent:
-                if intent.task_id != claim.task_id:
-                    raise ProviderError("archive_existing_intent_requires_recovery")
-                try:
-                    outcome = await self.reconcile(claim, storage, intent)
-                except (ProviderError, ValueError, KeyError, TypeError):
-                    self.intent_state(claim, intent.id, "move_unknown", "archive_reconcile_failed")
-                    raise ProviderError("archive_reconcile_failed") from None
-                if intent.status == "partial_failure":
-                    raise ProviderError("storage_move_partial_failure")
-                if outcome == "archived":
-                    return self.complete_archive(claim, intent)
-                if outcome != "source_intact" or intent.status in {
-                    "move_unknown",
-                    "partial_failure",
-                }:
-                    self.intent_state(claim, intent.id, "move_unknown", "move_unknown")
-                    raise ProviderError("move_unknown")
-                # A lost response with an intact source is NOT proof the server has
-                # stopped executing. Only a definite rejected request is retryable.
-                if intent.status not in {"planned", "retry_safe"}:
-                    self.intent_state(claim, intent.id, "move_unknown", "move_in_flight_unknown")
-                    raise ProviderError("move_in_flight_unknown")
-            if not config.move_verified or not (await storage.capabilities()).get(
-                "remote_move_verified"
-            ):
-                raise ProviderError("move_capability_unverified")
-            if not package.remote_path.startswith(config.input_path + "/"):
-                raise ProviderError("archive_source_outside_input")
-            await self.movies.source(claim, storage, config)
-            target = config.output_path + "/" + PurePosixPath(package.remote_path).name
-            if await self.exists(storage, target):
-                raise ProviderError("archive_target_conflict")
-            body = await storage.read_small(
-                package.remote_path + "/" + manifest.relative_path, MAX_SUBTITLE
-            )
-            if sha256(body) != manifest.sha256:
-                raise ProviderError("final_manifest_not_remote_verified")
-            snapshot = json.loads(body)
-            if snapshot["inventory"] != await self.inventory(claim, storage, package.remote_path):
-                raise ProviderError("source_changed_before_archive")
-            self.check(claim, Stage.ARCHIVE)
-            if intent is None:
-                with self.db.sessions.begin() as session:
-                    self.queue._owned(session, claim)
-                    intent = ArchiveIntent(
-                        package_id=package.id,
-                        task_id=claim.task_id,
-                        source=package.remote_path,
-                        target=target,
-                        snapshot={
-                            "entries": snapshot["inventory"],
-                            "manifest_path": manifest.relative_path,
-                        },
-                        manifest_sha256=manifest.sha256,
-                    )
-                    session.add(intent)
-                    session.flush()
-                # The committed intent exists before any MOVE is attempted.
-            self.intent_state(claim, intent.id, "sending")
-            self.check(claim, Stage.ARCHIVE)
-            error = None
-            try:
-                await storage.move(intent.source, intent.target)
-            except ProviderError as exc:
-                error = exc
-            # Cancellation/crash leaves 'sending'; next owner reconciles first.
-            self.movies.check(claim)
-            outcome = await self.reconcile_after_request(claim, storage, intent)
-            if outcome == "archived" and (
-                error is None or error.code != "storage_move_partial_failure"
-            ):
-                return self.complete_archive(claim, intent)
-            if error and error.code == "storage_move_partial_failure":
-                with self.db.sessions.begin() as session:
-                    self.queue._owned(session, claim)
-                    current = session.get(ArchiveIntent, intent.id)
-                    current.snapshot = {**current.snapshot, "move_failure": error.details}
-                    emit(session, "archive_partial_paths", claim.task_id, **error.details)
-                self.intent_state(claim, intent.id, "partial_failure", error.code)
-                raise error
-            if (
-                outcome == "source_intact"
-                and error
-                and error.code
-                in {"storage_conflict", "storage_permission_denied", "storage_move_unsupported"}
-            ):
-                self.intent_state(claim, intent.id, "retry_safe", error.code)
-                raise error
-            self.intent_state(
-                claim, intent.id, "move_unknown", error.code if error else "move_unknown"
-            )
-            raise ProviderError("move_unknown")
-
-    def complete_archive(self, claim, intent):
-        with self.db.sessions.begin() as session:
-            task, package = self.queue._owned(session, claim)
-            self.queue._current(session, task, package)
-            old = intent.source
-            package.remote_path, package.archive_status = intent.target, "archived"
-            package.source_snapshot = {
-                **package.source_snapshot,
-                "entries": [
-                    {
-                        **entry,
-                        "path": intent.target + entry["path"][len(old) :]
-                        if entry["path"].startswith(old + "/")
-                        else entry["path"],
-                    }
-                    for entry in package.source_snapshot.get("entries", [])
-                ],
-            }
-            session.get(ArchiveIntent, intent.id).status = "archived"
-            record = session.get(MovieRecord, package.id)
-            record.scan_status = "archived"
-            if record.media_path and record.media_path.startswith(old + "/"):
-                record.media_path = intent.target + record.media_path[len(old) :]
-            for media in session.scalars(select(Media).where(Media.package_id == package.id)):
-                if media.remote_path.startswith(old + "/"):
-                    media.remote_path = intent.target + media.remote_path[len(old) :]
-            for asset in session.scalars(select(Asset).where(Asset.package_id == package.id)):
-                if asset.remote_snapshot.get("path", "").startswith(old + "/"):
-                    asset.remote_snapshot = {
-                        **asset.remote_snapshot,
-                        "path": intent.target + asset.remote_snapshot["path"][len(old) :],
-                    }
-            emit(session, "package_archived", claim.task_id)
-        return {"status": "archived", "intent_id": intent.id}

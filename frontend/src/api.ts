@@ -9,6 +9,7 @@ export class ApiError extends Error {
 }
 
 const messages: Record<string, string> = {
+  context_changed: '媒体信息已更新，等待重新刮削',
   tmdb_original_language_unknown: 'TMDB 原始语言缺失或无法识别，需要人工确认',
   tmdb_original_language_chinese: '依据 TMDB 中文规则跳过；实际音轨未探测',
   default_audio_unknown: '无法确认实际默认音轨语言，需要人工确认',
@@ -23,14 +24,18 @@ const messages: Record<string, string> = {
   probe_timeout: '媒体探测超时，未下载整部视频',
   probe_byte_budget: '媒体探测超出读取预算，已停止',
   storage_range_ignored: '存储忽略 Range，已停止读取',
-  move_capability_unverified: '尚未确认当前路径范围的 MOVE 能力，刮削产物已保留',
+  move_capability_unverified: '旧版归档任务已停用，请重新扫描并原地刮削',
   archive_target_conflict: '目标已有同名目录，未覆盖',
-  source_changed_before_archive: '包内文件在生成清单后发生变化，已停止归档',
+  source_changed_before_archive: '旧版归档前文件发生变化，请重新扫描',
   storage_move_partial_failure: 'MOVE 返回子项失败，请核对两侧，未删除源',
   move_unknown: '移动结果不明；重试只核对状态，不盲目重发或删除',
   move_in_flight_unknown: '源完整但无法证明先前 MOVE 已停止，需人工核对',
-  archive_existing_intent_requires_recovery: '已有归档意图，请恢复原任务，避免新任务改变证据',
+  archive_existing_intent_requires_recovery: '保留旧版归档记录，当前版本仅原地刮削',
 
+  actor_images_disabled: '演员头像刮削已关闭，请先在配置中启用',
+  archive_removed: '归档移动功能已移除，请扫描并在原目录刮削',
+  package_outside_scrape_directories: '媒体路径不在已配置的刮削目录范围内',
+  source_changed_before_manifest: '生成清单期间文件发生变化，请重新扫描后重试',
   tmdb_credentials_required: '请先保存 TMDB 凭证',
   tmdb_timeout: 'TMDB 连接超时，请检查网络或代理',
   tmdb_not_found: 'TMDB ID 不存在，请核对电影与剧集类型',
@@ -53,7 +58,7 @@ const messages: Record<string, string> = {
   duplicate_episode_mapping: '同一包中多个文件映射到同一集，请核对',
   tmdb_episode_identity_conflict: 'TMDB 集身份与季集编号不一致，已保留原件',
   episode_not_found: '剧集文件不存在',
-  asset_retry_not_allowed: '此资产不能单独重试，请恢复原字幕或归档任务',
+  asset_retry_not_allowed: '此资产不能单独重试，请恢复原刮削任务',
   nested_package_requires_review: '目录层级不明确，需要人工整理',
   package_busy_pause_first: '包正在处理中，请暂停并等待任务释放租约',
   existing_asset_identity_conflict: '现存影坞资产属于另一个 TMDB ID，已保留，请人工核对',
@@ -125,8 +130,7 @@ export interface Config {
   revision: number
   webdav_url?: string
   webdav_username?: string
-  input_path?: string
-  output_path?: string
+  scrape_paths?: string[]
   webdav_password_set?: boolean
   tmdb_token_set?: boolean
   proxy_url?: string | null
@@ -139,7 +143,7 @@ export interface Config {
   stable_seconds?: number
   actor_limit?: number
   actor_policy?: string
-  move_verified?: boolean
+  scrape_actor_images?: boolean
   subtitle_download_hosts?: string[]
   policy_version?: number
 }
@@ -205,6 +209,8 @@ export interface MediaItem {
   error_code: string | null
 }
 export interface Film {
+  scrape_completed: boolean
+  actor_images_enabled: boolean
   metadata: {
     source: string | null
     original_title: string

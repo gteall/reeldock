@@ -92,7 +92,7 @@ async def setup_tv(foundation, tmp_path, original="zh", files=None):
     config, revision = store.load()
     store.save(
         ConfigUpdate(
-            **{**config.model_dump(), "stable_seconds": 1, "move_verified": True},
+            **{**config.model_dump(), "stable_seconds": 1},
             expected_revision=revision,
         )
     )

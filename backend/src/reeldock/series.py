@@ -1,4 +1,4 @@
-"""TV-specific identities and asset descriptions; upload/subtitles/MOVE stay shared."""
+"""TV-specific identities and asset descriptions; upload/subtitles stay shared."""
 
 from pathlib import PurePosixPath
 

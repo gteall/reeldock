@@ -118,7 +118,7 @@ async def test_shooter_rejects_explicit_other_episode_candidates():
             ],
         )
 
-    config = AppConfig(webdav_url="https://dav.example/dav/", input_path="/in", output_path="/out")
+    config = AppConfig(webdav_url="https://dav.example/dav/", scrape_paths=["/in"])
     async with ShooterProvider(config, transport=httpx.MockTransport(handle)) as provider:
         candidates = await provider.search(
             ";".join(["a" * 32] * 4), {"filename": "Show.S01E01.mkv", "season": 1, "episode": 1}

@@ -1,7 +1,7 @@
 """Repeatable P3 checks. Real WebDAV operations ONLY in P0_TEST_ROOT/random child.
 
 mock runs deterministic tests. shooter uses the P0 public fingerprint; no video.
-webdav uses synthetic bytes + Mock TMDB, real base readback/manifest/MOVE. It is
+webdav uses synthetic bytes + Mock TMDB, real in-place base readback/manifest. It is
 NOT a real film metadata match or NAS large-media probe compatibility test.
 """
 
@@ -16,11 +16,10 @@ from contextlib import nullcontext
 from pathlib import Path
 
 from dotenv import dotenv_values
-from sqlalchemy import select
 
 from reeldock.database import Database
 from reeldock.domain import AppConfig, ConfigUpdate, ProviderError
-from reeldock.models import ArchiveIntent, Package, Task
+from reeldock.models import Package, Task
 from reeldock.providers.shooter import ShooterProvider
 from reeldock.providers.webdav import WebDAVProvider
 from reeldock.queue import Queue
@@ -81,9 +80,7 @@ async def webdav(args, *, tv=False):
         webdav_url=values["P0_WEBDAV_URL"],
         webdav_username=values.get("P0_WEBDAV_USERNAME") or "",
         webdav_password=values.get("P0_WEBDAV_PASSWORD"),
-        input_path=root + "/input",
-        output_path=root + "/output",
-        move_verified=True,
+        scrape_paths=[root + "/input"],
         stable_seconds=1,
         http_timeout_seconds=30,
         redirect_hosts=[
@@ -126,11 +123,11 @@ async def webdav(args, *, tv=False):
                 metadata_factory=metadata,
                 storage_factory=GuardedDAV,
             )
-            package_path = config.input_path + "/Example (2020)"
+            package_path = config.scrape_paths[0] + "/Example (2020)"
             async with WebDAVProvider(config) as dav:
                 if not (await dav.stat(parent)).is_dir:
                     raise ProviderError("test_parent_not_directory")
-                for path in [root, config.input_path, config.output_path, package_path]:
+                for path in [root, config.scrape_paths[0], package_path]:
                     await dav.mkdir(path)
                 # Only this dedicated tool seeds tiny synthetic media-shaped bytes.
                 names = (
@@ -156,7 +153,6 @@ async def webdav(args, *, tv=False):
             with db.sessions.begin() as session:
                 task = session.get(Task, task_id)
                 package = session.get(Package, task.package_id)
-                intent = session.scalar(select(ArchiveIntent))
                 result = {
                     "status": "passed" if task.status == "completed" else "failed",
                     "scope": "dedicated_synthetic_"
@@ -164,9 +160,9 @@ async def webdav(args, *, tv=False):
                     + "_mock_tmdb_real_webdav",
                     "test_id": test_id,
                     "subtitle_status": package.subtitle_status,
-                    "archive_status": package.archive_status,
+                    "mode": "in_place",
+                    "media_moved": False,
                     "error_code": task.error_code,
-                    "intent_status": intent.status if intent else None,
                     "video_content_reads": 0,
                     "real_media_probe": "unverified",
                     "real_driver_version": "unverified",

@@ -32,14 +32,14 @@ it('includes scraped and archived packages while excluding partial assets and su
   expect(scrapedPackages([complete, archived, matched, failed, old])).toEqual([complete, archived])
 })
 
-it('combines search, media type and archive filters', () => {
-  const movie = film('Film', { archive_status: 'archived' })
+it('combines search, media type and completion filters', () => {
+  const movie = film('Film', { scrape_completed: true })
   const series = film('Series', { kind: 'tv', cast: [{ name: '演员甲' }] as Film['cast'] })
   const items = [movie, series]
-  expect(posterPackages(items, ' original title ', 'movie', 'archived', 'title')).toEqual([movie])
-  expect(posterPackages(items, '演员甲', 'tv', 'unarchived', 'title')).toEqual([series])
+  expect(posterPackages(items, ' original title ', 'movie', 'completed', 'title')).toEqual([movie])
+  expect(posterPackages(items, '演员甲', 'tv', 'partial', 'title')).toEqual([series])
   expect(posterPackages(items, 'DIRECTOR', 'all', 'all', 'title')).toHaveLength(2)
-  expect(posterPackages(items, '剧情', 'tv', 'archived', 'title')).toEqual([])
+  expect(posterPackages(items, '剧情', 'tv', 'completed', 'title')).toEqual([])
   expect(posterPackages(items, '/library/Film', 'all', 'all', 'title')).toEqual([movie])
 })
 

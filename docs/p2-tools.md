@@ -1,3 +1,5 @@
+> 历史阶段文档：当前版本已改为多目录原地刮削并移除归档移动，演员头像默认关闭。当前行为以 [原地刮削说明](in-place-scraping.md) 为准；本文中的 MOVE / 归档内容仅作历史记录。
+
 # P2 电影基础刮削与验证
 
 P2 的生产任务只执行 `match_metadata → base_assets_verified`，完成后结束。字幕显示“尚未进入字幕阶段”，实际音轨显示“未探测”；不创建最终 manifest，不读取视频内容，不调用 FFprobe / FFmpeg、射手或 MOVE。

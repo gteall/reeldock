@@ -26,8 +26,7 @@ async def tmdb(args):
     try:
         config = AppConfig(
             webdav_url="https://dav.example/dav/",
-            input_path="/input",
-            output_path="/output",
+            scrape_paths=["/input"],
             tmdb_token=values["P2_TMDB_TOKEN"],
             tmdb_proxy_url=values.get("P2_PROXY_URL"),
             http_timeout_seconds=30,
@@ -62,96 +61,13 @@ async def tmdb(args):
         db.close()
 
 
-async def reconcile(args):
-    """Resume an existing P4 archive intent with a read-only remote provider."""
-    from sqlalchemy import select
-
-    from reeldock.models import ArchiveIntent, Package, Task
-    from reeldock.providers.webdav import WebDAVProvider
-    from reeldock.queue import Queue
-    from reeldock.runtime import Runtime
-    from reeldock.security import SettingsStore, Vault
-    from reeldock.worker import Worker
-
-    if not args.journal:
-        return {"status": "unverified", "code": "existing_journal_required"}
-    folder = args.journal.resolve()
-    base = Path("reports/p4-runs").resolve()
-    if folder.parent != base or not folder.name.startswith(".reeldock-p4-"):
-        raise ProviderError("test_journal_scope_rejected")
-    values = dotenv_values(args.webdav_env, interpolate=False)
-    parent = (values.get("P0_TEST_ROOT") or "").rstrip("/")
-    db = Database(folder / "test.sqlite3")
-    try:
-        store = SettingsStore(db, Vault(folder))
-        config, _ = store.load()
-        with db.sessions.begin() as session:
-            intent = session.scalar(select(ArchiveIntent))
-            task = session.get(Task, intent.task_id) if intent else None
-        if (
-            not parent
-            or not intent
-            or not config
-            or intent.source != parent + "/" + folder.name + "/input/Example (2020)"
-            or intent.target != parent + "/" + folder.name + "/output/Example (2020)"
-        ):
-            raise ProviderError("test_journal_scope_rejected")
-
-        class ReadOnlyDAV(WebDAVProvider):
-            async def put(self, *args):
-                raise ProviderError("reconciliation_is_read_only")
-
-            async def mkdir(self, *args):
-                raise ProviderError("reconciliation_is_read_only")
-
-            async def move(self, *args):
-                raise ProviderError("reconciliation_is_read_only")
-
-            async def read_range(self, *args):
-                raise ProviderError("reconciliation_is_read_only")
-
-        queue = Queue(db)
-        if task.status == "completed":
-            return {
-                "status": "passed",
-                "scope": "existing_intent_read_only_recovery",
-                "already_completed": True,
-            }
-        if task.stage != "archive" or task.status not in {"blocked", "queued", "retry_wait"}:
-            raise ProviderError("archive_journal_not_recoverable")
-        if task.status in {"blocked", "retry_wait"}:
-            queue.control(task.id, "retry")
-        worker = Worker(queue, store, Runtime(data_dir=folder), storage_factory=ReadOnlyDAV)
-        claim = queue.claim("p4-read-only-recovery")
-        if not claim or claim.task_id != task.id:
-            raise ProviderError("unexpected_journal_task")
-        await worker.execute(claim)
-        with db.sessions.begin() as session:
-            task = session.get(Task, task.id)
-            package = session.get(Package, task.package_id)
-            intent = session.get(ArchiveIntent, intent.id)
-            return {
-                "status": "passed" if task.status == "completed" else "failed",
-                "scope": "existing_intent_read_only_recovery",
-                "archive_status": package.archive_status,
-                "intent_status": intent.status,
-                "error_code": task.error_code,
-                "remote_writes": 0,
-                "video_content_reads": 0,
-                "test_id": folder.name,
-            }
-    finally:
-        db.close()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["mock", "tmdb", "webdav", "reconcile"])
+    parser.add_argument("mode", choices=["mock", "tmdb", "webdav"])
     parser.add_argument("--tmdb-env", default=".env.p2")
     parser.add_argument("--webdav-env", default=".env.p0")
     parser.add_argument("--series-id", default="1399")
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--journal", type=Path)
     args = parser.parse_args()
     try:
         if args.mode == "mock":
@@ -161,8 +77,6 @@ def main():
                 "status": "passed" if completed.returncode == 0 else "failed",
                 "scope": "mock_p4_workflow_api_protocol_sse",
             }
-        elif args.mode == "reconcile":
-            result = asyncio.run(reconcile(args))
         elif args.mode == "tmdb":
             result = asyncio.run(tmdb(args))
         else:

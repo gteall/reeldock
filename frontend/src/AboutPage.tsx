@@ -13,7 +13,7 @@ export function AboutPage() {
   return (
     <Space orientation="vertical" size="large" style={{ width: '100%' }}>
       <Card title="ReelDock · 影坞">
-        <Paragraph>从远程媒体到随片元数据、字幕与安全归档。</Paragraph>
+        <Paragraph>从远程媒体到随片元数据、字幕与原地刮削。</Paragraph>
         <Descriptions
           column={1}
           items={[

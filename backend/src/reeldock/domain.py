@@ -45,8 +45,7 @@ class AppConfig(BaseModel):
     webdav_url: str
     webdav_username: str = Field(default="", max_length=256)
     webdav_password: SecretStr | None = None
-    input_path: str
-    output_path: str
+    scrape_paths: list[str] = Field(min_length=1, max_length=32)
     tmdb_token: SecretStr | None = None
     proxy_url: str | None = None
     tmdb_proxy_url: str | None = None
@@ -59,14 +58,42 @@ class AppConfig(BaseModel):
     policy_version: int = Field(default=1, ge=1)
     stable_seconds: int = Field(default=600, ge=1, le=86400)
     actor_limit: int = Field(default=20, ge=0, le=500)
+    scrape_actor_images: bool = False
     actor_policy: str = Field(default="available_only", pattern=r"^(available_only|strict)$")
-    move_verified: bool = False
     subtitle_download_hosts: list[str] = Field(
         default_factory=lambda: ["www.shooter.cn", "shooter.cn"], max_length=20
     )
 
     _url = field_validator("webdav_url")(validate_url)
-    _paths = field_validator("input_path", "output_path")(normalize_path)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_paths(cls, value):
+        if isinstance(value, dict) and "scrape_paths" not in value and value.get("input_path"):
+            value = {**value, "scrape_paths": [value["input_path"]]}
+        return value
+
+    @field_validator("scrape_paths")
+    @classmethod
+    def directories(cls, values: list[str]) -> list[str]:
+        paths = list(dict.fromkeys(normalize_path(value) for value in values))
+        if "/" in paths:
+            raise ValueError("刮削目录不能使用 WebDAV 根目录")
+        return paths
+
+    def root_for(self, path: str) -> str | None:
+        return next(
+            (root for root in self.scrape_paths if path == root or path.startswith(root + "/")),
+            None,
+        )
+
+    @property
+    def scan_roots(self) -> list[str]:
+        return [
+            path
+            for path in self.scrape_paths
+            if not any(path != root and path.startswith(root + "/") for root in self.scrape_paths)
+        ]
 
     @field_validator("proxy_url", "tmdb_proxy_url")
     @classmethod
@@ -89,16 +116,6 @@ class AppConfig(BaseModel):
             raise ValueError("TMDB 语言集合必须是两位或三位语言代码，例如 zh, cn")
         return result
 
-    @model_validator(mode="after")
-    def separate_paths(self):
-        a, b = self.input_path, self.output_path
-        # Compare decoded forms as well: ambiguous percent encodings must not bypass the gate.
-        for _ in range(5):
-            if a == b or a == "/" or b == "/" or a.startswith(b + "/") or b.startswith(a + "/"):
-                raise ValueError("待刮削与已刮削目录必须分离，不能相同、包含或使用根目录")
-            a, b = unquote(a).rstrip("/") or "/", unquote(b).rstrip("/") or "/"
-        return self
-
 
 class ConfigUpdate(AppConfig):
     expected_revision: int = Field(default=0, ge=0)
@@ -114,7 +131,7 @@ class Stage(StrEnum):
     ARCHIVE = "archive"
 
 
-STAGES = tuple(Stage)
+STAGES = (Stage.MATCH, Stage.BASE, Stage.SUBTITLE, Stage.MANIFEST)
 BASE_KINDS = frozenset({"nfo", "poster", "fanart", "actor"})
 
 

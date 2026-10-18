@@ -208,7 +208,7 @@ async def test_order_retry_reuses_completed_base_and_archive_is_disabled(foundat
     assert calls == ["match", "base", "subtitle", "subtitle", "manifest"]
     with db.sessions.begin() as session:
         task = session.get(Task, task_id)
-        assert task.status == "blocked" and task.error_code == "move_capability_unverified"
+        assert task.status == "completed" and task.stage == Stage.MANIFEST
 
 
 @pytest.mark.parametrize(
