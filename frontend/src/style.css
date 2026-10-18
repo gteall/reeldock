@@ -49,25 +49,10 @@ input {
   letter-spacing: 1.5px;
 }
 .brand-mark {
-  position: relative;
-  display: grid;
-  place-items: center;
+  display: block;
+  flex-shrink: 0;
   width: 43px;
   height: 45px;
-  color: #18332e;
-  background: #a9dfc7;
-  border-radius: 12px;
-  font-size: 30px;
-  font-weight: 800;
-}
-.brand-mark span {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #18332e;
-  right: 7px;
-  top: 8px;
 }
 .sidebar-label {
   margin: 48px 16px 18px;

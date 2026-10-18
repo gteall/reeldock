@@ -45,6 +45,8 @@ import type { PosterWallView } from './PosterWallPage'
 import { FilmDetailPage } from './FilmDetailPage'
 import { readRoute } from './navigation'
 
+const brandLogo = new URL('./assets/reeldock.svg', import.meta.url).href
+
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
   asset_retry: '资产局部重试',
@@ -154,9 +156,7 @@ function LoginPage({ onLogin }: { onLogin: (value: Session) => void }) {
 function Brand() {
   return (
     <div className="brand">
-      <span className="brand-mark">
-        R<span />
-      </span>
+      <img className="brand-mark" src={brandLogo} alt="" />
       <div>
         <strong>ReelDock</strong>
         <small>影坞 · 媒体工作台</small>
