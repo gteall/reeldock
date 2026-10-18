@@ -18,7 +18,7 @@ cp .env.example .env
 mkdir -p data cache
 # 使用 NAS 上实际运行影坞的非 root UID/GID；以下与默认值一致。
 sudo chown 10001:10001 data cache
-chmod 700 data cache
+sudo chmod 700 data cache
 ```
 
 在 `.env` 中修改以下配置，`REELDOCK_UID` 必须非 0：
@@ -29,8 +29,8 @@ chmod 700 data cache
 | `REELDOCK_UID` / `REELDOCK_GID` | 容器应用运行身份；绑定目录预先赋予相同属主；无需以 root 启动应用 |
 | `REELDOCK_DATA_PATH` | NAS 本地目录，保存 SQLite、WAL、master.key、实例锁及自行创建的备份 |
 | `REELDOCK_CACHE_PATH` | 独立本地缓存目录，可重建；丢失后预览可能需重新读回/局部重试 |
-| `REELDOCK_BIND_IP` / `REELDOCK_PORT` | 默认 `127.0.0.1:8765`；需要局域网直连时将绑定改为 `0.0.0.0` |
-| `REELDOCK_ALLOWED_ORIGINS` | 浏览器实际来源的 JSON 数组，包含协议、主机和端口；NAS 访问时必须替换/补充，如 `["http://nas.example:8765"]` |
+| `REELDOCK_BIND_IP` / `REELDOCK_PORT` | 默认 `127.0.0.1:8616`；需要局域网直连时将绑定改为 `0.0.0.0` |
+| `REELDOCK_ALLOWED_ORIGINS` | 浏览器实际来源的 JSON 数组，包含协议、主机和端口；NAS 访问时必须替换/补充，如 `["http://nas.example:8616"]` |
 | `REELDOCK_SECURE_COOKIE` | HTTP 为 false；由 HTTPS 访问时为 true |
 | `REELDOCK_WORKER_ENABLED` | 默认 true；恢复旧备份后可先设 false，仅检查状态，再启用任务 |
 
@@ -45,6 +45,10 @@ docker compose ps
 ```
 
 初始化交互式输入至少 12 位密码，无默认密码；已初始化的账号不能重复创建。应用已运行时也可初始化管理员，不在此操作中重复迁移。访问 `.env` 对应地址登录；`/api/health` 为本机健康检查，包含数据库连通性。
+
+当前 NAS 部署使用 **8616** 作为宿主端口，后续部署和排障沿用此端口；容器内部仍为 8000。实际 NAS 地址只保存在本地配置中。
+
+通过 `http://NAS地址:8616` 使用界面时，任务标识由 HTTP 可用的 `crypto.getRandomValues()` 生成，不依赖要求安全上下文的 `crypto.randomUUID()`。若旧版本出现 `crypto.randomUUID is not a function`，更新修复源码后重新构建镜像并重建容器，随后强制刷新浏览器；仅重启旧容器不会更新前端资源。保留已有 `.env`、`data` 和 `cache`，无需重新初始化管理员。
 
 如果 Docker Hub 拉取失败，可使用相同官方基础镜像的公共 ECR 来源，不修改 Docker 全局配置：
 
@@ -93,7 +97,7 @@ SSE 路径 `/api/events/stream` 需要关闭缓冲、允许长连接；Nginx 示
 
 ```nginx
 location / {
-    proxy_pass http://127.0.0.1:8765;
+    proxy_pass http://127.0.0.1:8616;
     proxy_http_version 1.1;
     proxy_buffering off;
     proxy_read_timeout 120s;

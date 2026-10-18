@@ -12,12 +12,12 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     ports:
-      - "${REELDOCK_BIND_IP:-127.0.0.1}:${REELDOCK_PORT:-8765}:8000"
+      - "${REELDOCK_BIND_IP:-127.0.0.1}:${REELDOCK_PORT:-8616}:8000"
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       REELDOCK_DATA_DIR: /data
       REELDOCK_CACHE_DIR: /cache
-      REELDOCK_ALLOWED_ORIGINS: '${REELDOCK_ALLOWED_ORIGINS:-["http://localhost:8765","http://127.0.0.1:8765"]}'
+      REELDOCK_ALLOWED_ORIGINS: '${REELDOCK_ALLOWED_ORIGINS:-["http://localhost:8616","http://127.0.0.1:8616"]}'
       REELDOCK_SECURE_COOKIE: ${REELDOCK_SECURE_COOKIE:-false}
       REELDOCK_WORKER_ENABLED: ${REELDOCK_WORKER_ENABLED:-true}
       REELDOCK_WORKER_CONCURRENCY: ${REELDOCK_WORKER_CONCURRENCY:-2}
