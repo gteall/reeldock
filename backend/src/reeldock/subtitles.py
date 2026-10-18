@@ -200,7 +200,7 @@ def matches_external(path, media_path):
         return False
     # Only language/track suffixes; a different movie sharing a prefix is not a match.
     suffix = stem[len(video) + 1 :]
-    if re.fullmatch(r"shooter\.[0-9a-f]{12}", suffix):
+    if re.fullmatch(r"(?:shooter|assrt)\.[0-9a-f]{12}", suffix):
         return True
     suffixes = suffix.split(".")
     return all(

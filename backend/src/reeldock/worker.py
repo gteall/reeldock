@@ -7,6 +7,7 @@ from dataclasses import replace
 from reeldock.completion import CompletionPipeline
 from reeldock.domain import ProviderError
 from reeldock.pipeline import MoviePipeline
+from reeldock.providers.assrt import AssrtProvider
 from reeldock.providers.shooter import ShooterProvider
 from reeldock.providers.tmdb import TMDBProvider
 from reeldock.providers.webdav import WebDAVProvider
@@ -28,6 +29,7 @@ class Worker:
         metadata_factory=TMDBProvider,
         probe=None,
         subtitle_factory=ShooterProvider,
+        manual_subtitle_factory=AssrtProvider,
     ):
         self.queue, self.settings, self.runtime = queue, settings, runtime
         self.storage_factory = storage_factory
@@ -48,11 +50,15 @@ class Worker:
             **(handlers or {}),
         }
         self.completion = CompletionPipeline(
-            self.movies, probe=probe, subtitle_factory=subtitle_factory
+            self.movies,
+            probe=probe,
+            subtitle_factory=subtitle_factory,
+            manual_subtitle_factory=manual_subtitle_factory,
         )
         self.handlers = {
             "subtitle_policy": self.completion.subtitle,
             "final_manifest": self.completion.manifest,
+            "subtitle_apply": self.completion.apply_subtitle,
             **self.handlers,
         }
         self.slots: list[asyncio.Task] = []
@@ -92,9 +98,13 @@ class Worker:
                 raise ProviderError("stage_not_implemented_p1")
             checkpoint = await handler(replace(claim, stage=stage))
             self.queue.finish_step(claim, stage, checkpoint)
-            if stage in {"connection_check", "scan", "asset_retry", "final_manifest"} or (
-                claim.kind == "movie_base" and stage == "base_assets_verified"
-            ):
+            if stage in {
+                "connection_check",
+                "scan",
+                "asset_retry",
+                "subtitle_apply",
+                "final_manifest",
+            } or (claim.kind == "movie_base" and stage == "base_assets_verified"):
                 return
 
     async def execute(self, claim: Claim):

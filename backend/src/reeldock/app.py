@@ -18,6 +18,7 @@ from reeldock.database import Database
 from reeldock.domain import ConfigUpdate, ProviderError, normalize_path
 from reeldock.episodes import parse_episode
 from reeldock.events import stream_events
+from reeldock.manual_subtitles import register_subtitle_routes
 from reeldock.models import (
     Admin,
     ArchiveIntent,
@@ -72,6 +73,7 @@ def create_app(
     metadata_factory=None,
     probe=None,
     subtitle_factory=None,
+    manual_subtitle_factory=None,
 ) -> FastAPI:
     runtime = runtime or Runtime()
 
@@ -97,6 +99,11 @@ def create_app(
                     **({"metadata_factory": metadata_factory} if metadata_factory else {}),
                     **({"probe": probe} if probe else {}),
                     **({"subtitle_factory": subtitle_factory} if subtitle_factory else {}),
+                    **(
+                        {"manual_subtitle_factory": manual_subtitle_factory}
+                        if manual_subtitle_factory
+                        else {}
+                    ),
                 )
                 app.state.db, app.state.store, app.state.queue = db, store, queue
                 app.state.worker = worker
@@ -166,6 +173,8 @@ def create_app(
         if not csrf or not secrets.compare_digest(digest(csrf), auth.csrf_hash):
             raise HTTPException(403, "csrf_check_failed")
         return auth
+
+    register_subtitle_routes(app, mutation)
 
     @app.get("/api/health")
     def health():
@@ -316,6 +325,7 @@ def create_app(
         return {
             "id": item.id,
             "path": item.remote_path,
+            "subtitle_search_keyword": PurePosixPath(item.remote_path).stem,
             "season": item.season,
             "episode": item.episode,
             "title": item.details.get("title") or PurePosixPath(item.remote_path).stem,
@@ -363,6 +373,7 @@ def create_app(
         return {
             "id": package.id,
             "actor_images_enabled": bool(config and config.scrape_actor_images),
+            "manual_subtitles_enabled": bool(config and config.assrt_token),
             "scrape_completed": bool(
                 package.manifest_version == package.context_version
                 and package.base_status == "remote_verified"

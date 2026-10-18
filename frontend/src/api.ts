@@ -16,6 +16,21 @@ const messages: Record<string, string> = {
   default_audio_ambiguous: '默认音轨或解说轨存在冲突，需要人工确认',
   embedded_subtitle_ambiguous: '内置字幕繁简标签冲突，需要人工确认',
   subtitle_no_match: '射手没有匹配字幕，请人工补齐后重试',
+  assrt_token_required: '请先在设置中配置 ASSRT Token，再搜索字幕',
+  assrt_token_invalid: 'ASSRT Token 无效，请在设置中检查或更新',
+  assrt_rate_limited: 'ASSRT 搜索次数已达限制，请稍后重试',
+  assrt_unavailable: 'ASSRT 暂时不可用，请稍后重试',
+  subtitle_keyword_too_short: '字幕搜索词至少需要 3 个字符',
+  subtitle_search_expired: '搜索结果已过期或影片信息已变化，请重新搜索',
+  subtitle_candidate_expired: '字幕文件已变化或不存在，请重新搜索并选择',
+  subtitle_manual_remaining: '所选字幕已应用，其他剧集仍需处理字幕',
+  subtitle_timeout: '字幕服务请求超时，请稍后重试',
+  subtitle_network_error: '无法连接字幕服务，请检查网络或代理',
+  subtitle_host_not_allowed: '字幕下载地址不属于受支持的字幕来源',
+  subtitle_http_error: '字幕下载失败，请稍后重试或选择其他版本',
+  subtitle_invalid_candidates: '字幕服务返回的数据无效，请稍后重试',
+  subtitle_duration_unknown: '缺少影片时长，请先执行字幕探测后再应用',
+  subtitle_format_unsupported: '只支持 SRT / ASS / SSA 字幕文件，请选择其他版本',
   subtitle_not_text: '字幕为空、编码异常或返回了网页',
   subtitle_no_dialogue: '字幕没有可解析的有效对白',
   subtitle_timeline_mismatch: '字幕时间轴与实际片长明显不符',
@@ -134,6 +149,7 @@ export interface Config {
   scrape_paths?: string[]
   webdav_password_set?: boolean
   tmdb_token_set?: boolean
+  assrt_token_set?: boolean
   proxy_url?: string | null
   tmdb_proxy_url?: string | null
   redirect_hosts?: string[]
@@ -195,6 +211,7 @@ export interface Asset {
 export interface MediaItem {
   id: string
   path: string
+  subtitle_search_keyword?: string
   title: string
   season: number | null
   episode: number | null
@@ -212,6 +229,7 @@ export interface MediaItem {
 export interface Film {
   scrape_completed: boolean
   actor_images_enabled: boolean
+  manual_subtitles_enabled?: boolean
   metadata: {
     source: string | null
     original_title: string

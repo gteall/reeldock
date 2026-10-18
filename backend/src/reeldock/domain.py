@@ -47,6 +47,7 @@ class AppConfig(BaseModel):
     webdav_password: SecretStr | None = None
     scrape_paths: list[str] = Field(min_length=1, max_length=32)
     tmdb_token: SecretStr | None = None
+    assrt_token: SecretStr | None = None
     proxy_url: str | None = None
     tmdb_proxy_url: str | None = None
     # Empty follows the configured WebDAV's download redirects; nonempty restricts hosts.
@@ -121,6 +122,7 @@ class ConfigUpdate(AppConfig):
     expected_revision: int = Field(default=0, ge=0)
     clear_webdav_password: bool = False
     clear_tmdb_token: bool = False
+    clear_assrt_token: bool = False
 
 
 class Stage(StrEnum):

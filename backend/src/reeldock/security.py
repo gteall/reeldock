@@ -15,6 +15,7 @@ from reeldock.domain import AppConfig, ConfigUpdate
 from reeldock.models import Admin, AuthSession, Configuration, Event, LoginLimit
 
 passwords = PasswordHash.recommended()
+CONFIG_SECRETS = ("webdav_password", "tmdb_token", "assrt_token")
 
 
 def digest(value: str) -> str:
@@ -37,7 +38,7 @@ class Vault:
 
     def seal(self, config: AppConfig) -> str:
         value = config.model_dump(mode="json")
-        for name in ("webdav_password", "tmdb_token"):
+        for name in CONFIG_SECRETS:
             secret = getattr(config, name)
             value[name] = secret.get_secret_value() if secret else None
         return self.cipher.encrypt(json.dumps(value).encode()).decode()
@@ -70,9 +71,10 @@ class SettingsStore:
                     "expected_revision",
                     "clear_webdav_password",
                     "clear_tmdb_token",
+                    "clear_assrt_token",
                 }
             )
-            for name in ("webdav_password", "tmdb_token"):
+            for name in CONFIG_SECRETS:
                 if getattr(update, "clear_" + name):
                     value[name] = None
                 elif not getattr(update, name) or not getattr(update, name).get_secret_value():
@@ -92,12 +94,13 @@ class SettingsStore:
         config, revision = self.load()
         if config is None:
             return {"configured": False, "revision": revision}
-        result = config.model_dump(mode="json", exclude={"webdav_password", "tmdb_token"})
+        result = config.model_dump(mode="json", exclude=set(CONFIG_SECRETS))
         result.update(
             configured=True,
             revision=revision,
             webdav_password_set=bool(config.webdav_password),
             tmdb_token_set=bool(config.tmdb_token),
+            assrt_token_set=bool(config.assrt_token),
         )
         return result
 

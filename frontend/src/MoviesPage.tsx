@@ -26,6 +26,7 @@ import type { Asset, Film } from './api'
 import { EpisodesPanel, ProbeEvidence } from './EpisodesPanel'
 import { directoryTree, visiblePackages } from './library'
 import { Preview, Status } from './MediaAssets'
+import { SubtitleSearch } from './SubtitleSearch'
 
 function assetState(film: Film, kind: string) {
   if (kind === 'actor' && !film.actor_images_enabled)
@@ -472,6 +473,7 @@ export function MoviesPage() {
                 <ProbeEvidence item={film} />
               </Card>
             )}
+            <SubtitleSearch key={film.id} film={film} busy={busy(film)} refresh={refresh} />
             <Card title="匹配与人工指定">
               <Form
                 layout="inline"

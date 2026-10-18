@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from reeldock.domain import BASE_KINDS, STAGES, ProviderError, Stage
-from reeldock.models import Asset, Configuration, Event, Media, Package, Task, TaskStep
+from reeldock.models import Asset, Configuration, Event, Media, MovieRecord, Package, Task, TaskStep
 
 ACTIVE = {"queued", "running", "retry_wait", "paused", "blocked"}
 SUBTITLE_PASSED = {
@@ -83,9 +83,12 @@ def base_verified(session, package: Package) -> bool:
 
 
 def gate(session, package: Package, stage: str):
-    if stage in {Stage.SUBTITLE, Stage.MANIFEST, Stage.ARCHIVE} and not base_verified(
-        session, package
-    ):
+    if stage in {
+        Stage.SUBTITLE,
+        Stage.MANIFEST,
+        Stage.ARCHIVE,
+        "subtitle_apply",
+    } and not base_verified(session, package):
         raise ProviderError("base_assets_not_remote_verified")
     if stage in {Stage.MANIFEST, Stage.ARCHIVE}:
         if package.kind == "tv":
@@ -188,9 +191,18 @@ class Queue:
         self.db, self.lease_seconds = db, lease_seconds
 
     def submit(
-        self, kind: str, path: str, key: str, config_revision: int, *, checkpoint=None
+        self,
+        kind: str,
+        path: str,
+        key: str,
+        config_revision: int,
+        *,
+        checkpoint=None,
+        expected_context_version=None,
     ) -> str:
         values = [kind, path, config_revision]
+        if expected_context_version is not None:
+            values.append(expected_context_version)
         if checkpoint is not None:
             values.append(checkpoint)
         payload = hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
@@ -201,6 +213,24 @@ class Queue:
                     raise ValueError("idempotency_key_conflict")
                 return old.id
             package = session.scalar(select(Package).where(Package.remote_path == path))
+            if kind == "subtitle_apply":
+                if not package or package.context_version != expected_context_version:
+                    raise ProviderError("context_changed_submit_new_task")
+                record = session.get(MovieRecord, package.id)
+                if not record or record.scan_status != "stable":
+                    raise ProviderError("package_not_stable")
+                gate(session, package, "subtitle_apply")
+                if (
+                    package.lease_owner and (package.lease_until or 0) > time.time()
+                ) or session.scalar(
+                    select(Task.id)
+                    .where(
+                        Task.package_id == package.id,
+                        Task.status.in_(["queued", "running", "retry_wait"]),
+                    )
+                    .limit(1)
+                ):
+                    raise ProviderError("package_busy_pause_first")
             if package is None:
                 package = Package(
                     remote_path=path,
@@ -215,13 +245,15 @@ class Queue:
                 payload_hash=payload,
                 context_version=package.context_version,
                 config_revision=config_revision,
-                stage=kind if kind in {"connection_check", "scan", "asset_retry"} else Stage.MATCH,
+                stage=kind
+                if kind in {"connection_check", "scan", "asset_retry", "subtitle_apply"}
+                else Stage.MATCH,
             )
             session.add(task)
             session.flush()
             stages = (
                 [kind]
-                if kind in {"connection_check", "scan", "asset_retry"}
+                if kind in {"connection_check", "scan", "asset_retry", "subtitle_apply"}
                 else (STAGES[:2] if kind == "movie_base" else STAGES)
             )
             for stage in stages:
@@ -395,9 +427,13 @@ class Queue:
             emit(session, "step_completed", task.id, stage=stage)
             if stage == Stage.BASE:
                 package.base_status = "remote_verified"
-            if stage in {"connection_check", "scan", "asset_retry", Stage.MANIFEST} or (
-                task.kind == "movie_base" and stage == Stage.BASE
-            ):
+            if stage in {
+                "connection_check",
+                "scan",
+                "asset_retry",
+                "subtitle_apply",
+                Stage.MANIFEST,
+            } or (task.kind == "movie_base" and stage == Stage.BASE):
                 task.status, task.error_code = "completed", None
                 if stage == Stage.MANIFEST:
                     legacy = session.scalar(

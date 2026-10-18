@@ -106,6 +106,10 @@ class MoviePipeline:
             }
         snapshot = source_snapshot(entries)
         snapshot["config_revision"] = claim.config_revision
+        if claim.kind == "subtitle_apply":
+            # Manual subtitle jobs preserve the verified media context when only
+            # credentials/settings changed; actual media entries must still match.
+            snapshot["config_revision"] = package.source_snapshot.get("config_revision")
         # Protected pre-P4 MOVE intents keep their historical snapshot format.
         if "kind" in package.source_snapshot:
             snapshot["kind"] = package.kind

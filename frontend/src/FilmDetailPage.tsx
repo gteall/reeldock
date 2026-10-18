@@ -20,6 +20,7 @@ import { CachedImage } from './CachedImage'
 import { ProbeEvidence } from './EpisodesPanel'
 import { Preview, Status } from './MediaAssets'
 import { artwork, scrapedPackages } from './posters'
+import { SubtitleSearch } from './SubtitleSearch'
 
 const assetNames: Record<string, string> = {
   nfo: 'NFO 元数据',
@@ -278,6 +279,15 @@ export function FilmDetailPage({ id }: { id: string }) {
                     <ProbeEvidence item={film} />
                   </Card>
                 )}
+                <SubtitleSearch
+                  key={film.id}
+                  film={film}
+                  busy={
+                    film.lease_active ||
+                    ['running', 'queued', 'retry_wait'].includes(film.task_status ?? '')
+                  }
+                  refresh={() => query.refetch()}
+                />
               </div>
             ),
           },

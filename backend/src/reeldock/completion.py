@@ -8,8 +8,9 @@ from sqlalchemy import or_, select
 
 from reeldock.cache import sha256
 from reeldock.domain import ProviderError, Stage
-from reeldock.models import Asset, Media, Package
+from reeldock.models import Asset, Media, Package, TaskStep
 from reeldock.probe import MediaProbe, validate_vobsub_pair
+from reeldock.providers.assrt import AssrtProvider
 from reeldock.providers.shooter import ShooterProvider
 from reeldock.queue import SUBTITLE_PASSED, emit, gate
 from reeldock.subtitles import (
@@ -29,10 +30,110 @@ def canonical(value):
 
 
 class CompletionPipeline:
-    def __init__(self, movies, *, probe=None, subtitle_factory=ShooterProvider):
+    def __init__(
+        self,
+        movies,
+        *,
+        probe=None,
+        subtitle_factory=ShooterProvider,
+        manual_subtitle_factory=AssrtProvider,
+    ):
         self.movies, self.db, self.queue = movies, movies.db, movies.queue
         self.probe = probe or MediaProbe()
         self.subtitle_factory = subtitle_factory
+        self.manual_subtitle_factory = manual_subtitle_factory
+
+    async def apply_subtitle(self, claim):
+        config = self.movies.configuration(claim)
+        package, _ = self.movies.record(claim)
+        with self.db.sessions.begin() as session:
+            self.queue._owned(session, claim)
+            step = session.scalar(
+                select(TaskStep).where(
+                    TaskStep.task_id == claim.task_id, TaskStep.stage == "subtitle_apply"
+                )
+            )
+            selection = step.checkpoint
+            media = session.get(Media, selection.get("media_id"))
+            if not media or media.package_id != package.id:
+                raise ProviderError("episode_not_found")
+        saved = media.probe_evidence
+        if saved.get("context_version") != claim.context_version:
+            raise ProviderError("subtitle_duration_unknown")
+        duration = saved.get("probe", {}).get("duration")
+        async with self.movies.storage_factory(config) as storage:
+            await self.base_readback(claim, storage)
+            await self.movies.source(claim, storage, config)
+            await self.verify_media(claim, storage, media)
+            async with self.manual_subtitle_factory(config) as provider:
+                raw = await provider.download(
+                    selection["candidate_id"], selection["file_index"], selection["file_name"]
+                )
+            self.movies.cache.put(raw)
+            extension = PurePosixPath(selection["file_name"]).suffix.lower().lstrip(".")
+            body, evidence = validate_subtitle(raw, extension, duration)
+            parent = PurePosixPath(media.remote_path).parent.relative_to(package.remote_path)
+            relative = str(
+                parent
+                / (
+                    PurePosixPath(media.remote_path).stem
+                    + ".assrt."
+                    + sha256(body)[:12]
+                    + "."
+                    + extension
+                )
+            )
+            await self.verify_media(claim, storage, media)
+            await self.save_asset(claim, storage, relative, "subtitle", body, media_id=media.id)
+            with self.db.sessions.begin() as session:
+                self.queue._owned(session, claim)
+                for old in session.scalars(
+                    select(Asset).where(
+                        Asset.media_id == media.id,
+                        Asset.kind == "subtitle",
+                        Asset.relative_path != relative,
+                    )
+                ):
+                    old.required = False
+                for old in session.scalars(
+                    select(Asset).where(
+                        Asset.package_id == package.id,
+                        Asset.kind == "manifest",
+                    )
+                ):
+                    old.required = False
+                session.get(Package, package.id).manifest_version = None
+            selected_evidence = {
+                "source": "assrt",
+                "candidate_id": selection["candidate_id"],
+                "file_name": selection["file_name"],
+                "keyword": selection["keyword"],
+                "download": evidence,
+                "path": relative,
+                "manual": True,
+            }
+            self.media_result(media.id, claim, "downloaded_verified", evidence=selected_evidence)
+            with self.db.sessions.begin() as session:
+                items = list(session.scalars(select(Media).where(Media.package_id == package.id)))
+                remaining = sum(
+                    item.subtitle_status not in SUBTITLE_PASSED
+                    or item.subtitle_version != claim.context_version
+                    for item in items
+                )
+                results = {
+                    item.id: {"status": item.subtitle_status, **item.subtitle_evidence}
+                    for item in items
+                }
+            if remaining:
+                self.result(claim, "failed", "subtitle_manual_remaining", {"media": results})
+            elif len(items) == 1:
+                self.result(claim, "downloaded_verified", evidence=selected_evidence)
+            else:
+                self.result(claim, "all_media_verified", evidence={"media": results})
+            await self.movies.source(claim, storage, config)
+        if not remaining:
+            await self.manifest(claim)
+        return {"media_id": media.id, "source": "assrt", "path": relative, "remaining": remaining}
 
     async def exists(self, storage, path):
         try:

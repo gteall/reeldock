@@ -49,6 +49,7 @@ const brandLogo = new URL('./assets/reeldock.svg', import.meta.url).href
 
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
+  subtitle_apply: '手动字幕应用',
   asset_retry: '资产局部重试',
   connection_check: '只读连接检查',
   scan: '目录扫描',
@@ -190,8 +191,10 @@ function SettingsPage() {
         chinese_languages_text: query.data.chinese_languages?.join(', ') ?? 'zh, cn',
         webdav_password: '',
         tmdb_token: '',
+        assrt_token: '',
         clear_webdav_password: false,
         clear_tmdb_token: false,
+        clear_assrt_token: false,
       })
   }, [query.data, form])
   const save = useMutation({
@@ -418,6 +421,31 @@ function SettingsPage() {
           </Form.Item>
         </Card>
         <Card title="字幕下载来源" className="form-card">
+          <Form.Item
+            name="assrt_token"
+            label="ASSRT Token（手动搜索字幕）"
+            extra={
+              query.data?.assrt_token_set
+                ? '已配置 · 留空保留现有 Token'
+                : '在 ASSRT 用户面板获取个人 Token'
+            }
+          >
+            <Input.Password autoComplete="new-password" placeholder="仅写入，不回显" />
+          </Form.Item>
+          <Form.Item name="clear_assrt_token" valuePropName="checked">
+            <Checkbox>清除 ASSRT Token</Checkbox>
+          </Form.Item>
+          <Paragraph type="secondary">
+            用于影片详情中的关键词搜索与手动选择字幕。
+            <a href="https://assrt.net/usercp.php" target="_blank" rel="noreferrer">
+              获取 Token
+            </a>
+            {' · '}字幕服务由{' '}
+            <a href="https://assrt.net" target="_blank" rel="noreferrer">
+              assrt.net
+            </a>{' '}
+            提供。
+          </Paragraph>
           <Form.Item
             name="subtitle_download_hosts_text"
             label="射手字幕下载主机"
