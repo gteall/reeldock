@@ -136,13 +136,19 @@ export function MoviesPage() {
     },
     onError: error,
   })
+  const selectedPackages = visiblePackages(films.data?.items ?? [], '', 'all', 'all').filter((f) =>
+    checked.includes(f.id),
+  )
   const batch = useMutation({
     mutationFn: async (action: string) => {
-      const items = (films.data?.items ?? []).filter((f) => checked.includes(f.id))
+      const items = selectedPackages
       if (action === 'start')
         return api<{ items: typeof batchResults }>('/batch/tasks', {
           method: 'POST',
-          body: JSON.stringify({ package_ids: checked, idempotency_key: newTaskKey() }),
+          body: JSON.stringify({
+            package_ids: items.map((f) => f.id),
+            idempotency_key: newTaskKey(),
+          }),
         })
       const missing = items
         .filter((f) => !f.task_id)
@@ -162,7 +168,9 @@ export function MoviesPage() {
     },
     onError: error,
   })
-  const tree = directoryTree(films.data?.items ?? [])
+  const tree = directoryTree(
+    visiblePackages(films.data?.items ?? [], '', 'all', state === 'missing' ? 'missing' : 'all'),
+  )
   return (
     <>
       <Alert
@@ -217,16 +225,17 @@ export function MoviesPage() {
                 onChange={setState}
                 style={{ width: 160 }}
                 options={[
-                  { label: '全部状态', value: 'all' },
+                  { label: '当前媒体', value: 'all' },
                   { label: '失败 / 待处理', value: 'failed' },
                   { label: '缺字幕 / 待检查', value: 'subtitle' },
+                  { label: '源已消失', value: 'missing' },
                 ]}
               />
-              <Typography.Text>已选 {checked.length} 包</Typography.Text>
+              <Typography.Text>已选 {selectedPackages.length} 包</Typography.Text>
               {(['start', 'pause', 'resume', 'retry'] as const).map((action) => (
                 <Button
                   key={action}
-                  disabled={!checked.length || batch.isPending}
+                  disabled={!selectedPackages.length || batch.isPending}
                   onClick={() => batch.mutate(action)}
                 >
                   {
@@ -264,15 +273,25 @@ export function MoviesPage() {
               style={{ maxWidth: 360, marginBottom: 16 }}
             />
             {films.isError && <Alert type="error" title={String(films.error)} />}
+            {state === 'missing' && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                title="源已消失的历史记录"
+                description="上次扫描未找到这些影片的源媒体，刮削和任务历史仍保留。源文件恢复后，重新扫描即可回到当前媒体列表。"
+              />
+            )}
             <Table<Film>
               rowKey="id"
               loading={films.isPending}
               scroll={{ x: 1150 }}
               dataSource={visiblePackages(films.data?.items ?? [], filter, kind, state, directory)}
               rowSelection={{
-                selectedRowKeys: checked,
+                selectedRowKeys: selectedPackages.map((f) => f.id),
                 onChange: (keys) => setChecked(keys.map(String)),
                 preserveSelectedRowKeys: true,
+                getCheckboxProps: (f) => ({ disabled: f.scan_status === 'missing' }),
               }}
               expandable={{
                 rowExpandable: (f) => f.kind === 'tv',
@@ -288,7 +307,15 @@ export function MoviesPage() {
                 ),
               }}
               locale={{
-                emptyText: <Empty description="保存连接配置后扫描目录，至少两次扫描用于判断稳定" />,
+                emptyText: (
+                  <Empty
+                    description={
+                      state === 'missing'
+                        ? '没有源已消失的历史记录'
+                        : '保存连接配置后扫描目录，至少两次扫描用于判断稳定'
+                    }
+                  />
+                ),
               }}
               columns={[
                 {

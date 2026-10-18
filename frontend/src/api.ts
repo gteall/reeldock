@@ -50,6 +50,7 @@ const messages: Record<string, string> = {
   actor_filename_collision: '演员头像文件名冲突，请人工核对',
   package_not_stable: '媒体包尚未稳定，请扫描并等待稳定窗口',
   source_changed_scan_again: '源文件发生变化，请重新扫描并等待稳定',
+  source_missing: '扫描时未找到源媒体，请检查媒体目录并重新扫描',
   loose_media_requires_directory: '散放视频需要整理为独立目录',
   multiple_media_requires_review: '同一目录包含多个视频，需要人工整理',
   episode_number_unknown: '季集号不明确，请人工修正后重新扫描',

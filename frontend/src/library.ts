@@ -16,6 +16,9 @@ export function visiblePackages(
   directory = '',
 ) {
   return items.filter((item) => {
+    if (item.scan_status === 'superseded') return false
+    if (state === 'missing' ? item.scan_status !== 'missing' : item.scan_status === 'missing')
+      return false
     if (!`${item.title} ${item.path}`.toLowerCase().includes(search.toLowerCase())) return false
     if (kind !== 'all' && item.kind !== kind) return false
     if (directory && item.path !== directory && !item.path.startsWith(directory + '/')) return false
