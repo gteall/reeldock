@@ -32,6 +32,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons'
 import { api, ApiError, explain, setCsrf } from './api'
+import { newTaskKey } from './taskKey'
 import type { Config, Session, Task, TaskEvent } from './api'
 import { MoviesPage } from './MoviesPage'
 import { connectEvents } from './liveEvents'
@@ -227,7 +228,7 @@ function SettingsPage() {
   })
   const check = useMutation({
     mutationFn: () => {
-      checkKey.current ??= crypto.randomUUID()
+      checkKey.current ??= newTaskKey()
       return api<{ task_id: string }>('/connection-check', {
         method: 'POST',
         body: JSON.stringify({ idempotency_key: checkKey.current }),

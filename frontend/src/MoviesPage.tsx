@@ -21,6 +21,7 @@ import {
 } from 'antd'
 import { FileSearchOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { api, explain } from './api'
+import { newTaskKey } from './taskKey'
 import type { Asset, Film } from './api'
 import { EpisodesPanel, ProbeEvidence } from './EpisodesPanel'
 import { directoryTree, visiblePackages } from './library'
@@ -80,7 +81,7 @@ export function MoviesPage() {
     mutationFn: () =>
       api('/scan', {
         method: 'POST',
-        body: JSON.stringify({ idempotency_key: crypto.randomUUID() }),
+        body: JSON.stringify({ idempotency_key: newTaskKey() }),
       }),
     onSuccess: () => {
       refresh()
@@ -95,7 +96,7 @@ export function MoviesPage() {
         body: JSON.stringify({
           kind: 'package_pipeline',
           package_path: f.path,
-          idempotency_key: crypto.randomUUID(),
+          idempotency_key: newTaskKey(),
         }),
       }),
     onSuccess: () => {
@@ -127,7 +128,7 @@ export function MoviesPage() {
     mutationFn: (a: Asset) =>
       api(`/assets/${a.id}/retry`, {
         method: 'POST',
-        body: JSON.stringify({ idempotency_key: crypto.randomUUID() }),
+        body: JSON.stringify({ idempotency_key: newTaskKey() }),
       }),
     onSuccess: () => {
       refresh()
@@ -141,7 +142,7 @@ export function MoviesPage() {
       if (action === 'start')
         return api<{ items: typeof batchResults }>('/batch/tasks', {
           method: 'POST',
-          body: JSON.stringify({ package_ids: checked, idempotency_key: crypto.randomUUID() }),
+          body: JSON.stringify({ package_ids: checked, idempotency_key: newTaskKey() }),
         })
       const missing = items
         .filter((f) => !f.task_id)

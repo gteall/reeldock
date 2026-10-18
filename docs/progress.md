@@ -1,6 +1,6 @@
 # ReelDock · 影坞：开发进度与交接
 
-更新日期：2026-10-17。
+更新日期：2026-10-18。
 
 ## 当前状态
 
@@ -46,6 +46,14 @@ P5 部署与发布准备已实施：生产多阶段 Docker / Compose、非 root 
 
 部署见 [deployment.md](deployment.md)，复验见 [p5-tools.md](p5-tools.md)，备份/升级/回退见 [upgrade.md](upgrade.md)。继续补齐真实媒体、Kodi 断网无缓存、大媒体和真实故障注入验收；条件 PUT 非原子，媒体包仍须独占管理。明确发布指令前保持开发版本和草稿 PR，不推送 GHCR、不打 Git 标签、不创建 Release。
 
+
+## NAS HTTP 兼容修复：2026-10-18
+
+- 用户已在 NAS 部署，宿主端口确定为 **8616**；后续部署和排障使用此端口。Compose 默认端口、来源示例和部署说明同步更新；容器端口仍为 8000，已有 `.env` 的显式配置保留优先级。
+- HTTP NAS 来源通常没有 `crypto.randomUUID()`，导致点击扫描时在浏览器生成幂等键即失败，请求尚未发送。扫描、启动刮削、资产重试、批量刮削及连接检查统一使用 `crypto.getRandomValues()` 生成 128 位随机幂等键，保留连接检查的重试键复用，不修改会话、CSRF 或后端幂等语义。
+- 在独立工作区修复，保留原工作区未提交的海报墙修改。新增回归覆盖无 randomUUID 的 HTTP 扫描请求、独立任务键及批量键格式、随机字节保留。
+- 与最新 main 的海报墙功能整合后，`pnpm test` 17 项通过，`pnpm format:check` 和 `pnpm build` 通过；Compose 按示例解析为宿主 8616 → 容器 8000，来源列表有效，`git diff --check` 通过。
+- 本机浏览器通过局域网 HTTP:8616 打开自建验证页，实际确认 `isSecureContext=false`、`crypto.randomUUID` 缺失、`crypto.getRandomValues` 可用；同一生产函数成功生成 1024 个互不重复、格式有效的任务键。仅验证浏览器兼容性，未访问真实 WebDAV 或读取用户媒体；用户 NAS 更新镜像后的实际扫描尚未验证。临时 HTTP 服务与页面已关闭，截图保存在本地忽略的 `reports/http-task-key.png`。
 
 ## P0 实施记录：2026-10-08
 
