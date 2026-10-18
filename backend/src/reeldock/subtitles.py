@@ -74,6 +74,15 @@ def default_audio(probe):
     }
 
 
+def audio_evidence(probe):
+    try:
+        return {"audio": default_audio(probe)}
+    except ProviderError as error:
+        if error.code not in {"default_audio_unknown", "default_audio_ambiguous"}:
+            raise
+        return {"audio_error": error.code}
+
+
 def simplified_track(stream):
     tag = (stream.get("language") or "").lower().replace("_", "-")
     title = stream.get("title") or ""
@@ -94,6 +103,22 @@ def simplified_track(stream):
     if hans and (hant or (language(tag) not in {None, "zh"})):
         raise ProviderError("embedded_subtitle_ambiguous")
     return hans and not hant
+
+
+def selected_embedded_stream(saved, context_version, index):
+    if saved.get("context_version") != context_version:
+        raise ProviderError("subtitle_probe_required")
+    stream = next(
+        (
+            item
+            for item in saved.get("probe", {}).get("streams", [])
+            if item.get("index") == index and item.get("type") == "subtitle"
+        ),
+        None,
+    )
+    if stream is None:
+        raise ProviderError("embedded_subtitle_not_found")
+    return stream
 
 
 def decode(data):

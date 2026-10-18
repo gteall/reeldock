@@ -1,15 +1,24 @@
 import { useState } from 'react'
 import { App, Button, Descriptions, Form, InputNumber, Modal, Space, Table, Typography } from 'antd'
 import { api, explain } from './api'
-import type { Asset, Film, MediaItem } from './api'
+import type { Asset, Film, MediaItem, ProbeStream } from './api'
+import { EmbeddedSubtitleButton } from './EmbeddedSubtitleButton'
 
 export function ProbeEvidence({
   item,
+  film,
+  mediaId,
+  busy = false,
+  refresh,
 }: {
   item: Pick<
     MediaItem,
     'probe_status' | 'probe_evidence' | 'subtitle_status' | 'subtitle_reason' | 'subtitle_evidence'
   >
+  film?: Film
+  mediaId?: string
+  busy?: boolean
+  refresh?: () => void
 }) {
   const audio = item.probe_evidence.audio
   const embedded = item.subtitle_evidence.embedded
@@ -18,12 +27,19 @@ export function ProbeEvidence({
     typeof embedded === 'object' &&
     'verification' in embedded &&
     embedded.verification === 'stream_metadata'
+  const manualBased =
+    embedded &&
+    typeof embedded === 'object' &&
+    'verification' in embedded &&
+    embedded.verification === 'manual_confirmation'
   const subtitleReason = item.subtitle_reason
     ? explain(item.subtitle_reason)
     : item.subtitle_status === 'embedded_zh_hans'
-      ? metadataBased
-        ? '内置简体图形字幕（依据轨道标记，免下载）'
-        : '内置简体文本字幕已校验，免下载'
+      ? manualBased
+        ? `人工确认使用内置简体 / 双语字幕（轨道 ${item.subtitle_evidence.stream_index}），免下载`
+        : metadataBased
+          ? '内置简体图形字幕（依据轨道标记，免下载）'
+          : '内置简体文本字幕已校验，免下载'
       : explain(item.subtitle_reason)
   return (
     <>
@@ -59,23 +75,53 @@ export function ProbeEvidence({
         ]}
       />
       {item.probe_status === 'probed' && (
-        <Table
-          size="small"
-          pagination={false}
-          rowKey="index"
-          dataSource={item.probe_evidence.probe?.streams ?? []}
-          columns={[
-            { title: '轨道', dataIndex: 'index' },
-            { title: '类型', dataIndex: 'type' },
-            { title: '编码', dataIndex: 'codec' },
-            { title: '语言标签', dataIndex: 'language' },
-            { title: '标题', dataIndex: 'title' },
-            {
-              title: '默认 / forced',
-              render: (_, s) => `${s.default ? '默认' : '—'} / ${s.forced ? 'forced' : '—'}`,
-            },
-          ]}
-        />
+        <>
+          {film && mediaId && refresh && (
+            <Typography.Paragraph type="secondary">
+              已自行确认字幕包含完整简体或简英双语对白时，可点击“使用此字幕”，无需下载。
+            </Typography.Paragraph>
+          )}
+          <Table
+            size="small"
+            pagination={false}
+            rowKey="index"
+            dataSource={item.probe_evidence.probe?.streams ?? []}
+            columns={[
+              { title: '轨道', dataIndex: 'index' },
+              { title: '类型', dataIndex: 'type' },
+              { title: '编码', dataIndex: 'codec' },
+              { title: '语言标签', dataIndex: 'language' },
+              { title: '标题', dataIndex: 'title' },
+              {
+                title: '默认 / forced',
+                render: (_, s) => `${s.default ? '默认' : '—'} / ${s.forced ? 'forced' : '—'}`,
+              },
+              ...(film && mediaId && refresh
+                ? [
+                    {
+                      title: '字幕使用',
+                      render: (_: unknown, stream: ProbeStream) =>
+                        stream.type === 'subtitle' ? (
+                          <EmbeddedSubtitleButton
+                            key={`${film.id}:${film.context_version}:${mediaId}:${stream.index}`}
+                            film={film}
+                            mediaId={mediaId}
+                            stream={stream}
+                            selected={
+                              item.subtitle_status === 'embedded_zh_hans' &&
+                              item.subtitle_evidence.stream_index === stream.index
+                            }
+                            manual={!!manualBased}
+                            busy={busy}
+                            refresh={refresh}
+                          />
+                        ) : null,
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        </>
       )}
     </>
   )
@@ -234,7 +280,17 @@ export function EpisodesPanel({
                   ),
                 },
               ]}
-              expandable={{ expandedRowRender: (item) => <ProbeEvidence item={item} /> }}
+              expandable={{
+                expandedRowRender: (item) => (
+                  <ProbeEvidence
+                    item={item}
+                    film={film}
+                    mediaId={item.id}
+                    busy={busy}
+                    refresh={refresh}
+                  />
+                ),
+              }}
             />
           ),
         }}

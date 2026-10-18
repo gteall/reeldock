@@ -1,4 +1,4 @@
-"""Authenticated manual subtitle search; short-lived results contain no download URLs."""
+"""Authenticated subtitle search and source-bound manual embedded subtitle choices."""
 
 import secrets
 from pathlib import PurePosixPath
@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from reeldock.domain import ProviderError
 from reeldock.models import Media, MovieRecord, Package
+from reeldock.subtitles import selected_embedded_stream
 
 
 class SubtitleSearch(BaseModel):
@@ -26,12 +27,19 @@ class SubtitleApply(SubtitleFiles):
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9:_-]+$")
 
 
+class EmbeddedSubtitleConfirm(BaseModel):
+    media_id: str = Field(min_length=1, max_length=64)
+    expected_context_version: int = Field(ge=1)
+    stream_index: int = Field(ge=0)
+    idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9:_-]+$")
+
+
 def register_subtitle_routes(app, mutation):
-    def context(package_id, media_id, version):
+    def context(package_id, media_id, version, *, require_token=True):
         config, revision = app.state.store.load()
         if not config:
             raise HTTPException(409, "configuration_required")
-        if not config.assrt_token or not config.assrt_token.get_secret_value():
+        if require_token and (not config.assrt_token or not config.assrt_token.get_secret_value()):
             raise HTTPException(409, "assrt_token_required")
         with app.state.db.sessions.begin() as session:
             package = session.get(Package, package_id)
@@ -139,6 +147,37 @@ def register_subtitle_routes(app, mutation):
                 revision,
                 checkpoint=selection,
                 expected_context_version=saved["context_version"],
+            )
+        except ProviderError as error:
+            raise HTTPException(409, error.code) from None
+        except ValueError:
+            raise HTTPException(409, "idempotency_key_conflict") from None
+        return {"task_id": task_id}
+
+    @app.post(
+        "/api/packages/{package_id}/subtitles/confirm-embedded",
+        status_code=202,
+        dependencies=[Depends(mutation)],
+    )
+    def confirm_embedded_subtitle(package_id: str, body: EmbeddedSubtitleConfirm):
+        _, revision, package, media = context(
+            package_id, body.media_id, body.expected_context_version, require_token=False
+        )
+        try:
+            selected_embedded_stream(
+                media.probe_evidence, package.context_version, body.stream_index
+            )
+            task_id = app.state.queue.submit(
+                "subtitle_apply",
+                package.remote_path,
+                body.idempotency_key,
+                revision,
+                checkpoint={
+                    "source": "embedded",
+                    "media_id": media.id,
+                    "stream_index": body.stream_index,
+                },
+                expected_context_version=package.context_version,
             )
         except ProviderError as error:
             raise HTTPException(409, error.code) from None

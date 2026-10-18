@@ -276,7 +276,16 @@ export function FilmDetailPage({ id }: { id: string }) {
                 </Card>
                 {film.kind === 'movie' && (
                   <Card title="音轨与字幕探测">
-                    <ProbeEvidence item={film} />
+                    <ProbeEvidence
+                      item={film}
+                      film={film}
+                      mediaId={film.media[0]?.id}
+                      busy={
+                        film.lease_active ||
+                        ['running', 'queued', 'retry_wait'].includes(film.task_status ?? '')
+                      }
+                      refresh={() => query.refetch()}
+                    />
                   </Card>
                 )}
                 <SubtitleSearch
@@ -374,7 +383,18 @@ export function FilmDetailPage({ id }: { id: string }) {
                               <Typography.Paragraph className="film-path">
                                 {item.path}
                               </Typography.Paragraph>
-                              <ProbeEvidence item={item} />
+                              <ProbeEvidence
+                                item={item}
+                                film={film}
+                                mediaId={item.id}
+                                busy={
+                                  film.lease_active ||
+                                  ['running', 'queued', 'retry_wait'].includes(
+                                    film.task_status ?? '',
+                                  )
+                                }
+                                refresh={() => query.refetch()}
+                              />
                             </>
                           ),
                         }}

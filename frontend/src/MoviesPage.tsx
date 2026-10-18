@@ -470,7 +470,13 @@ export function MoviesPage() {
             )}
             {film.kind !== 'tv' && film.probe_status === 'probed' && (
               <Card title="实际探测证据">
-                <ProbeEvidence item={film} />
+                <ProbeEvidence
+                  item={film}
+                  film={film}
+                  mediaId={film.media[0]?.id}
+                  busy={busy(film)}
+                  refresh={refresh}
+                />
               </Card>
             )}
             <SubtitleSearch key={film.id} film={film} busy={busy(film)} refresh={refresh} />

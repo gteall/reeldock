@@ -95,7 +95,7 @@ def manual_app(runtime, config_body, request):
         yield client, dav, metadata, probe, shooter, manual
 
 
-async def failed_movie(env):
+async def failed_movie(env, expected_error="subtitle_no_match"):
     client = env[0]
     worker = client.app.state.worker
     config, revision = client.app.state.store.load()
@@ -110,7 +110,7 @@ async def failed_movie(env):
         },
     ).json()["task_id"]
     await worker.execute(client.app.state.queue.claim("automatic-worker"))
-    assert client.get("/api/tasks/" + task).json()["error_code"] == "subtitle_no_match"
+    assert client.get("/api/tasks/" + task).json()["error_code"] == expected_error
     return client.get("/api/packages").json()["items"][0]
 
 

@@ -15,9 +15,10 @@ from reeldock.queue import SUBTITLE_PASSED, emit, gate
 from reeldock.subtitles import (
     BITMAP_SUBTITLE_CODECS,
     MAX_SUBTITLE,
-    default_audio,
+    audio_evidence,
     matches_external,
     original_class,
+    selected_embedded_stream,
     simplified_track,
     validate_subtitle,
 )
@@ -56,6 +57,8 @@ class CompletionPipeline:
             if not media or media.package_id != package.id:
                 raise ProviderError("episode_not_found")
         saved = media.probe_evidence
+        if selection.get("source") == "embedded":
+            return await self.confirm_embedded(claim, config, package, media, selection)
         if saved.get("context_version") != claim.context_version:
             raise ProviderError("subtitle_duration_unknown")
         duration = saved.get("probe", {}).get("duration")
@@ -83,24 +86,6 @@ class CompletionPipeline:
             )
             await self.verify_media(claim, storage, media)
             await self.save_asset(claim, storage, relative, "subtitle", body, media_id=media.id)
-            with self.db.sessions.begin() as session:
-                self.queue._owned(session, claim)
-                for old in session.scalars(
-                    select(Asset).where(
-                        Asset.media_id == media.id,
-                        Asset.kind == "subtitle",
-                        Asset.relative_path != relative,
-                    )
-                ):
-                    old.required = False
-                for old in session.scalars(
-                    select(Asset).where(
-                        Asset.package_id == package.id,
-                        Asset.kind == "manifest",
-                    )
-                ):
-                    old.required = False
-                session.get(Package, package.id).manifest_version = None
             selected_evidence = {
                 "source": "assrt",
                 "candidate_id": selection["candidate_id"],
@@ -110,28 +95,82 @@ class CompletionPipeline:
                 "path": relative,
                 "manual": True,
             }
-            self.media_result(media.id, claim, "downloaded_verified", evidence=selected_evidence)
-            with self.db.sessions.begin() as session:
-                items = list(session.scalars(select(Media).where(Media.package_id == package.id)))
-                remaining = sum(
-                    item.subtitle_status not in SUBTITLE_PASSED
-                    or item.subtitle_version != claim.context_version
-                    for item in items
-                )
-                results = {
-                    item.id: {"status": item.subtitle_status, **item.subtitle_evidence}
-                    for item in items
-                }
-            if remaining:
-                self.result(claim, "failed", "subtitle_manual_remaining", {"media": results})
-            elif len(items) == 1:
-                self.result(claim, "downloaded_verified", evidence=selected_evidence)
-            else:
-                self.result(claim, "all_media_verified", evidence={"media": results})
+            remaining = self.selected_subtitle(
+                claim, package, media, "downloaded_verified", selected_evidence, path=relative
+            )
             await self.movies.source(claim, storage, config)
         if not remaining:
             await self.manifest(claim)
         return {"media_id": media.id, "source": "assrt", "path": relative, "remaining": remaining}
+
+    def selected_subtitle(self, claim, package, media, status, evidence, *, path=None):
+        """Commit a manual choice and aggregate the current package's subtitle state."""
+        self.check(claim)
+        with self.db.sessions.begin() as session:
+            self.queue._owned(session, claim)
+            for old in session.scalars(
+                select(Asset).where(
+                    Asset.media_id == media.id,
+                    Asset.kind == "subtitle",
+                    Asset.relative_path != path,
+                )
+            ):
+                old.required = False
+            for old in session.scalars(
+                select(Asset).where(Asset.package_id == package.id, Asset.kind == "manifest")
+            ):
+                old.required = False
+            session.get(Package, package.id).manifest_version = None
+        self.media_result(media.id, claim, status, evidence=evidence)
+        with self.db.sessions.begin() as session:
+            items = list(session.scalars(select(Media).where(Media.package_id == package.id)))
+            remaining = sum(
+                item.subtitle_status not in SUBTITLE_PASSED
+                or item.subtitle_version != claim.context_version
+                for item in items
+            )
+            results = {
+                item.id: {"status": item.subtitle_status, **item.subtitle_evidence}
+                for item in items
+            }
+        if remaining:
+            self.result(claim, "failed", "subtitle_manual_remaining", {"media": results})
+        elif len(items) == 1:
+            self.result(claim, status, evidence=evidence)
+        else:
+            self.result(claim, "all_media_verified", evidence={"media": results})
+        return remaining
+
+    async def confirm_embedded(self, claim, config, package, media, selection):
+        saved = media.probe_evidence
+        stream = selected_embedded_stream(saved, claim.context_version, selection["stream_index"])
+        async with self.movies.storage_factory(config) as storage:
+            await self.base_readback(claim, storage)
+            await self.movies.source(claim, storage, config)
+            await self.verify_media(claim, storage, media)
+            evidence = {
+                "source": "embedded",
+                "stream_index": stream["index"],
+                "manual": True,
+                "embedded": {
+                    "verification": "manual_confirmation",
+                    "codec": stream.get("codec"),
+                    "language": stream.get("language"),
+                    "title": stream.get("title"),
+                    "forced": bool(stream.get("forced")),
+                },
+                **audio_evidence(saved["probe"]),
+            }
+            remaining = self.selected_subtitle(claim, package, media, "embedded_zh_hans", evidence)
+            await self.movies.source(claim, storage, config)
+        if not remaining:
+            await self.manifest(claim)
+        return {
+            "media_id": media.id,
+            "source": "embedded",
+            "stream_index": stream["index"],
+            "remaining": remaining,
+        }
 
     async def exists(self, storage, path):
         try:
@@ -451,7 +490,8 @@ class CompletionPipeline:
                 row = session.get(Media, media.id)
                 row.probe_status = "probed"
                 row.probe_evidence = {"context_version": claim.context_version, "probe": data}
-            audio = default_audio(data)
+            audio_context = audio_evidence(data)
+            audio = audio_context.get("audio")
             with self.db.sessions.begin() as session:
                 self.queue._owned(session, claim)
                 row = session.get(Media, media.id)
@@ -459,10 +499,10 @@ class CompletionPipeline:
                 row.probe_evidence = {
                     "context_version": claim.context_version,
                     "probe": data,
-                    "audio": audio,
+                    **audio_context,
                 }
             await self.verify_media(claim, storage, media)
-            if audio["language"] == "zh":
+            if audio and audio["language"] == "zh":
                 return self.media_result(
                     media.id, claim, "default_audio_chinese", evidence={"audio": audio}
                 )
@@ -523,7 +563,7 @@ class CompletionPipeline:
                         media.id,
                         claim,
                         "external_verified",
-                        evidence={"audio": audio, "external": evidence, "path": entry["path"]},
+                        evidence={**audio_context, "external": evidence, "path": entry["path"]},
                     )
                 await self.remember_external(
                     claim, storage, remote, body, package.remote_path, media.id
@@ -532,7 +572,7 @@ class CompletionPipeline:
                     media.id,
                     claim,
                     "external_verified",
-                    evidence={"audio": audio, "external": evidence, "path": entry["path"]},
+                    evidence={**audio_context, "external": evidence, "path": entry["path"]},
                 )
             for stream in sorted(data["streams"], key=lambda item: not item.get("default")):
                 if stream["type"] != "subtitle" or not simplified_track(stream):
@@ -569,11 +609,15 @@ class CompletionPipeline:
                     claim,
                     "embedded_zh_hans",
                     evidence={
-                        "audio": audio,
+                        **audio_context,
                         "embedded": evidence,
                         "stream_index": stream["index"],
                     },
                 )
+            # Existing subtitles satisfy policy regardless of audio language. An
+            # unknown or ambiguous default track still blocks an external search.
+            if "audio_error" in audio_context:
+                raise ProviderError(audio_context["audio_error"])
         await self.verify_media(claim, storage, media)
         keyword = PurePosixPath(media.remote_path).stem
         with self.db.sessions.begin() as session:

@@ -24,6 +24,8 @@ const messages: Record<string, string> = {
   subtitle_search_expired: '搜索结果已过期或影片信息已变化，请重新搜索',
   subtitle_candidate_expired: '字幕文件已变化或不存在，请重新搜索并选择',
   subtitle_manual_remaining: '所选字幕已应用，其他剧集仍需处理字幕',
+  subtitle_probe_required: '当前媒体没有有效的探测结果，请先运行字幕检查',
+  embedded_subtitle_not_found: '所选内置字幕轨道已失效，请刷新详情后重新选择',
   subtitle_timeout: '字幕服务请求超时，请稍后重试',
   subtitle_network_error: '无法连接字幕服务，请检查网络或代理',
   subtitle_host_not_allowed: '字幕下载地址不属于受支持的字幕来源',
@@ -225,6 +227,15 @@ export interface MediaItem {
   probe_evidence: Film['probe_evidence']
   error_code: string | null
 }
+export interface ProbeStream {
+  index: number
+  type: string
+  codec: string
+  language?: string
+  title?: string
+  default?: number
+  forced?: number
+}
 export interface Film {
   scrape_completed: boolean
   actor_images_enabled: boolean
@@ -253,18 +264,11 @@ export interface Film {
   probe_status: string
   probe_evidence: {
     audio?: { language: string; selection: string }
+    audio_error?: string
     probe?: {
       bytes_requested?: number
       duration?: number | null
-      streams?: {
-        index: number
-        type: string
-        codec: string
-        language?: string
-        title?: string
-        default?: number
-        forced?: number
-      }[]
+      streams?: ProbeStream[]
     }
   }
   archive_status: string
