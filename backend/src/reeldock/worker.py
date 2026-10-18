@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from reeldock.completion import CompletionPipeline
 from reeldock.domain import ProviderError
+from reeldock.metadata_reset import reset_metadata
 from reeldock.pipeline import MoviePipeline
 from reeldock.providers.assrt import AssrtProvider
 from reeldock.providers.tmdb import TMDBProvider
@@ -58,6 +59,7 @@ class Worker:
             "subtitle_policy": self.completion.subtitle,
             "final_manifest": self.completion.manifest,
             "subtitle_apply": self.completion.apply_subtitle,
+            "metadata_reset": lambda claim: reset_metadata(self.movies, claim),
             **self.handlers,
         }
         self.slots: list[asyncio.Task] = []
@@ -102,6 +104,7 @@ class Worker:
                 "scan",
                 "asset_retry",
                 "subtitle_apply",
+                "metadata_reset",
                 "final_manifest",
             } or (claim.kind == "movie_base" and stage == "base_assets_verified"):
                 return

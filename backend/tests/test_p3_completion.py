@@ -202,7 +202,7 @@ async def test_failed_pgs_download_retries_using_saved_stream_labels(
     assert probe.calls == {"probe": 1}
     assert shooter.calls == previous_shooter_calls and metadata.calls == previous_metadata_calls
     assert dav.calls["media_reads"] == media_reads
-    manifest = json.loads(next(body for path, body in dav.files.items() if path.endswith(".json")))
+    manifest = json.loads(next(body for path, body in dav.files.items() if "/manifest-v" in path))
     assert manifest["subtitle_evidence"]["stream_index"] == 5
 
 

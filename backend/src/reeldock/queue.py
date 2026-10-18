@@ -213,13 +213,30 @@ class Queue:
                     raise ValueError("idempotency_key_conflict")
                 return old.id
             package = session.scalar(select(Package).where(Package.remote_path == path))
-            if kind == "subtitle_apply":
+            if (
+                package
+                and kind != "metadata_reset"
+                and session.scalar(
+                    select(Task.id)
+                    .where(
+                        Task.package_id == package.id,
+                        Task.kind == "metadata_reset",
+                        Task.status.in_(["queued", "running", "retry_wait"]),
+                    )
+                    .limit(1)
+                )
+            ):
+                raise ProviderError("package_busy_pause_first")
+            if kind in {"subtitle_apply", "metadata_reset"}:
                 if not package or package.context_version != expected_context_version:
                     raise ProviderError("context_changed_submit_new_task")
                 record = session.get(MovieRecord, package.id)
-                if not record or record.scan_status != "stable":
+                if not record or record.scan_status in {"missing", "superseded"}:
                     raise ProviderError("package_not_stable")
-                gate(session, package, "subtitle_apply")
+                if kind == "subtitle_apply":
+                    if record.scan_status != "stable":
+                        raise ProviderError("package_not_stable")
+                    gate(session, package, "subtitle_apply")
                 if (
                     package.lease_owner and (package.lease_until or 0) > time.time()
                 ) or session.scalar(
@@ -246,14 +263,16 @@ class Queue:
                 context_version=package.context_version,
                 config_revision=config_revision,
                 stage=kind
-                if kind in {"connection_check", "scan", "asset_retry", "subtitle_apply"}
+                if kind
+                in {"connection_check", "scan", "asset_retry", "subtitle_apply", "metadata_reset"}
                 else Stage.MATCH,
             )
             session.add(task)
             session.flush()
             stages = (
                 [kind]
-                if kind in {"connection_check", "scan", "asset_retry", "subtitle_apply"}
+                if kind
+                in {"connection_check", "scan", "asset_retry", "subtitle_apply", "metadata_reset"}
                 else (STAGES[:2] if kind == "movie_base" else STAGES)
             )
             for stage in stages:
@@ -427,11 +446,16 @@ class Queue:
             emit(session, "step_completed", task.id, stage=stage)
             if stage == Stage.BASE:
                 package.base_status = "remote_verified"
+            if stage == "metadata_reset":
+                from reeldock.metadata_reset import clear_records
+
+                clear_records(session, package, task.config_revision)
             if stage in {
                 "connection_check",
                 "scan",
                 "asset_retry",
                 "subtitle_apply",
+                "metadata_reset",
                 Stage.MANIFEST,
             } or (task.kind == "movie_base" and stage == Stage.BASE):
                 task.status, task.error_code = "completed", None

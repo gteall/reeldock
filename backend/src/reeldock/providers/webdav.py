@@ -289,7 +289,7 @@ class WebDAVProvider:
         allowed |= (
             name.suffix == ".json"
             and name.parent.name == ".reeldock"
-            and name.name.startswith("manifest-v")
+            and name.name.startswith(("manifest-v", "embedded-"))
         )
         if not allowed or len(content) > 20 * 1024 * 1024:
             raise ProviderError("storage_asset_write_rejected")
@@ -319,6 +319,40 @@ class WebDAVProvider:
 
     async def move(self, source: str, target: str) -> None:
         raise ProviderError("archive_removed")
+
+    async def delete(self, path: str, *, etag: str | None = None) -> None:
+        from pathlib import PurePosixPath
+
+        if PurePosixPath(path).suffix.lower() not in {
+            ".nfo",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".srt",
+            ".ass",
+            ".ssa",
+            ".idx",
+            ".sub",
+            ".json",
+        }:
+            raise ProviderError("metadata_delete_rejected")
+        try:
+            current = await self.stat(path)
+        except ProviderError as error:
+            if error.code == "storage_not_found":
+                return
+            raise
+        if current.is_dir:
+            raise ProviderError("metadata_delete_rejected")
+        if etag and current.etag != etag:
+            raise ProviderError("metadata_changed_refresh_preview")
+        headers = {"If-Match": etag} if etag else {}
+        async with self.response("DELETE", path, headers=headers) as response:
+            if response.status_code == 412:
+                raise ProviderError("metadata_changed_refresh_preview")
+            if response.status_code not in {200, 204, 404}:
+                raise status_error(response.status_code)
 
     async def capabilities(self) -> dict[str, bool]:
         return {

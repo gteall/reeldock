@@ -367,6 +367,10 @@ async def test_metadata_language_change_commits_invalidation_and_allows_new_task
     task, _ = await run_movie(env)
     assert task.status == "completed"
     env[6].movies[0].original_language = "zh"
+    # An explicit metadata refresh still applies the identity/version guard;
+    # ordinary incremental tasks keep the already scraped metadata.
+    with env[0].sessions.begin() as session:
+        session.scalar(select(MovieRecord)).details = {}
     task, package = await run_movie(env, "language-changed")
     assert task.error_code == "metadata_changed_submit_new_task"
     with env[0].sessions.begin() as session:
@@ -514,6 +518,8 @@ async def test_changed_required_actor_plan_commits_invalidation_for_new_task(fou
             profile=Artwork(source="tmdb", external_id="/new.jpg", kind="actor"),
         )
     )
+    with env[0].sessions.begin() as session:
+        session.get(MovieRecord, package.id).details = {}
     task, _ = await run_movie(env, "changed-plan")
     assert task.error_code == "asset_plan_changed_submit_new_task"
     with env[0].sessions.begin() as session:

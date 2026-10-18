@@ -27,9 +27,9 @@ async def match_series(pipeline, claim):
             ids = explicit_ids(package.remote_path)
             root_nfo = package.remote_path + "/tvshow.nfo"
             for entry in entries:
-                if entry.path == root_nfo and not entry.is_dir:
-                    body = await storage.read_small(root_nfo, MAX_NFO_BYTES)
-                    pipeline._remember_existing(claim, "tvshow.nfo", body)
+                if entry.path.casefold() == root_nfo.casefold() and not entry.is_dir:
+                    body = await storage.read_small(entry.path, MAX_NFO_BYTES)
+                    pipeline._remember_existing(claim, PurePosixPath(entry.path).name, body)
                     identifiers = nfo_ids(body, "tvshow")
                     if not identifiers:
                         raise ProviderError("existing_nfo_id_missing")

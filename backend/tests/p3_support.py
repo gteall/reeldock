@@ -47,6 +47,13 @@ class DAV(MemoryDAV):
     async def capabilities(self):
         return {"remote_move_verified": True}
 
+    async def delete(self, path, *, etag=None):
+        assert path not in self.media, "metadata deletion must never target video"
+        self.calls["delete:" + PurePosixPath(path).name] += 1
+        if path in self.files and etag and self.entry(path).etag != etag:
+            raise ProviderError("metadata_changed_refresh_preview")
+        self.files.pop(path, None)
+
     def perform_move(self, source, target, *, copy_only=False):
         for mapping in [self.media, self.files]:
             for path in list(mapping):

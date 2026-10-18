@@ -53,7 +53,9 @@ export function Status({ value }: { value: string }) {
 export function Preview({ asset, close }: { asset: Asset | null; close: () => void }) {
   const nfo = useQuery({
     queryKey: ['nfo', asset?.id, asset?.sha256],
-    enabled: ['nfo', 'subtitle', 'manifest'].includes(asset?.kind ?? '') && !!asset?.preview,
+    enabled:
+      ['nfo', 'subtitle', 'manifest', 'subtitle_marker'].includes(asset?.kind ?? '') &&
+      !!asset?.preview,
     queryFn: async () => {
       const response = await fetch(asset!.preview!, { credentials: 'same-origin' })
       if (!response.ok) throw new Error('预览缓存不可用，请重试资产任务')
@@ -62,7 +64,7 @@ export function Preview({ asset, close }: { asset: Asset | null; close: () => vo
   })
   return (
     <Modal open={!!asset} onCancel={close} footer={null} width={850} title={asset?.path}>
-      {['nfo', 'subtitle', 'manifest'].includes(asset?.kind ?? '') ? (
+      {['nfo', 'subtitle', 'manifest', 'subtitle_marker'].includes(asset?.kind ?? '') ? (
         nfo.isPending ? (
           <Spin />
         ) : nfo.isError ? (

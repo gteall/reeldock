@@ -27,6 +27,7 @@ import { EpisodesPanel, ProbeEvidence } from './EpisodesPanel'
 import { directoryTree, visiblePackages } from './library'
 import { Preview, Status } from './MediaAssets'
 import { SubtitleSearch } from './SubtitleSearch'
+import { DeleteMetadataButton } from './DeleteMetadataButton'
 
 function assetState(film: Film, kind: string) {
   if (kind === 'actor' && !film.actor_images_enabled)
@@ -178,7 +179,7 @@ export function MoviesPage() {
         type="info"
         showIcon
         title="电影与剧集工作台"
-        description="整包电影或剧集基础必需资产全部远程验证后才处理字幕；中文剧每集零探测。任一集失败保留已完成的刮削结果，所有数据原地保存。"
+        description="批量和单片均为增量刮削：复用已有 NFO、图片及字幕，只补缺失文件；内置字幕标志有效时跳过探测。需要重新刮削时，请先在影片详情中删除元数据。所有结果原地保存。"
       />
       <div className="library-layout">
         <Card className="library-tree" title="目录与剧集">
@@ -433,6 +434,7 @@ export function MoviesPage() {
               >
                 启动原地刮削
               </Button>
+              <DeleteMetadataButton key={film.id} film={film} busy={busy(film)} refresh={refresh} />
               {film.task_id &&
                 ['failed', 'blocked', 'retry_wait'].includes(film.task_status ?? '') && (
                   <Button

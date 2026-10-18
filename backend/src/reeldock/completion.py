@@ -8,6 +8,7 @@ from sqlalchemy import or_, select
 
 from reeldock.cache import sha256
 from reeldock.domain import ProviderError, Stage
+from reeldock.embedded_markers import EmbeddedMarkers
 from reeldock.models import Asset, Media, Package, TaskStep
 from reeldock.probe import MediaProbe, validate_vobsub_pair
 from reeldock.providers.assrt import AssrtProvider
@@ -41,6 +42,7 @@ class CompletionPipeline:
         self.probe = probe or MediaProbe()
         self.subtitle_factory = subtitle_factory
         self.manual_subtitle_factory = manual_subtitle_factory
+        self.markers = EmbeddedMarkers(self)
 
     async def apply_subtitle(self, claim):
         config = self.movies.configuration(claim)
@@ -161,6 +163,9 @@ class CompletionPipeline:
                 },
                 **audio_evidence(saved["probe"]),
             }
+            evidence = await self.markers.save(
+                claim, storage, config, package, media, evidence, saved["probe"]
+            )
             remaining = self.selected_subtitle(claim, package, media, "embedded_zh_hans", evidence)
             await self.movies.source(claim, storage, config)
         if not remaining:
@@ -256,7 +261,8 @@ class CompletionPipeline:
             controls = set(
                 session.scalars(
                     select(Asset.relative_path).where(
-                        Asset.package_id == claim.package_id, Asset.kind == "manifest"
+                        Asset.package_id == claim.package_id,
+                        Asset.kind.in_(["manifest", "subtitle_marker"]),
                     )
                 )
             )
@@ -368,7 +374,8 @@ class CompletionPipeline:
                 )
                 for old in session.scalars(
                     select(Asset).where(
-                        Asset.package_id == package.id, Asset.kind.in_(["subtitle", "manifest"])
+                        Asset.package_id == package.id,
+                        Asset.kind.in_(["subtitle", "manifest", "subtitle_marker"]),
                     )
                 ):
                     if (
@@ -397,9 +404,26 @@ class CompletionPipeline:
             for item in media:
                 try:
                     reused = await self.reuse_media(claim, storage, item, package)
+                    if not reused:
+                        reused = await self.markers.restore(claim, storage, config, package, item)
                     results[item.id] = reused or await self.foreign(
                         claim, storage, config, package, record, item
                     )
+                    if results[item.id]["status"] == "embedded_zh_hans":
+                        with self.db.sessions.begin() as session:
+                            probe = session.get(Media, item.id).probe_evidence.get("probe")
+                        evidence = await self.markers.save(
+                            claim,
+                            storage,
+                            config,
+                            package,
+                            item,
+                            {k: v for k, v in results[item.id].items() if k != "status"},
+                            probe,
+                        )
+                        results[item.id] = self.media_result(
+                            item.id, claim, "embedded_zh_hans", evidence=evidence
+                        )
                 except ProviderError as error:
                     if error.code in {
                         "lease_lost",
@@ -465,17 +489,35 @@ class CompletionPipeline:
                 )
             if not assets:
                 return None
+            valid = True
             for asset in assets:
                 if (
                     asset.status != "remote_verified"
                     or asset.verified_version != claim.context_version
                 ):
-                    return None
-                body = await storage.read_small(
-                    package.remote_path + "/" + asset.relative_path, 20 * 1024 * 1024
-                )
+                    valid = False
+                    break
+                try:
+                    body = await storage.read_small(
+                        package.remote_path + "/" + asset.relative_path, 20 * 1024 * 1024
+                    )
+                except ProviderError as error:
+                    if error.code != "storage_not_found":
+                        raise
+                    valid = False
+                    break
                 if sha256(body) != asset.sha256:
-                    raise ProviderError("upload_verification_failed")
+                    valid = False
+                    break
+                self.movies.cache.put(body)
+            if not valid:
+                with self.db.sessions.begin() as session:
+                    self.queue._owned(session, claim)
+                    for old in session.scalars(
+                        select(Asset).where(Asset.media_id == media.id, Asset.kind == "subtitle")
+                    ):
+                        old.required = False
+                return None
         return {"status": media.subtitle_status, **media.subtitle_evidence}
 
     async def foreign(self, claim, storage, config, package, record, media):

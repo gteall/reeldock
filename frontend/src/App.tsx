@@ -50,6 +50,7 @@ const brandLogo = new URL('./assets/reeldock.svg', import.meta.url).href
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
   subtitle_apply: '手动字幕应用',
+  metadata_reset: '删除元数据',
   asset_retry: '资产局部重试',
   connection_check: '只读连接检查',
   scan: '目录扫描',

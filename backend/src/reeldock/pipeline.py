@@ -2,6 +2,7 @@
 
 import re
 import time
+from collections import Counter
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
@@ -32,6 +33,7 @@ from reeldock.scanner import (
     source_snapshot,
 )
 from reeldock.series import asset_descriptions, match_series
+from reeldock.sidecars import image_alias
 
 
 def art_data(art):
@@ -163,7 +165,9 @@ class MoviePipeline:
                 str(PurePosixPath(record.media_path).with_suffix(".nfo")),
                 package.remote_path + "/movie.nfo",
             }
-            if len(nfos) > 1 or any(e.path not in allowed for e in nfos):
+            if len(nfos) > 1 or any(
+                e.path.casefold() not in {p.casefold() for p in allowed} for e in nfos
+            ):
                 raise ProviderError("multiple_nfo_requires_review")
             for entry in nfos:
                 body = await storage.read_small(entry.path, MAX_NFO_BYTES)
@@ -197,6 +201,14 @@ class MoviePipeline:
                 raise ProviderError("tmdb_id_conflict")
             chosen = record.manual_id or next(iter(ids), None)
             candidates = record.candidates
+            if (
+                record.match_status == "matched"
+                and record.details
+                and package.tmdb_id
+                and chosen in {None, package.tmdb_id}
+                and record.details.get("external_id") == package.tmdb_id
+            ):
+                return {"tmdb_id": package.tmdb_id, "reused": True}
             if chosen is None:
                 movies = await metadata.search(parsed.title, "movie", parsed.year)
                 candidates = rank_candidates(parsed, movies)
@@ -299,7 +311,8 @@ class MoviePipeline:
     def freeze(self, claim, record, config, entries):
         record.cast = self.cast([Person.model_validate(person) for person in record.cast], config)
         with self.db.sessions.begin() as session:
-            kind = session.get(Package, claim.package_id).kind
+            package = session.get(Package, claim.package_id)
+            kind, root = package.kind, package.remote_path
             session.get(MovieRecord, claim.package_id).cast = record.cast
         sources = {}
         if kind == "tv":
@@ -325,24 +338,66 @@ class MoviePipeline:
             for p in record.cast
             if config.scrape_actor_images and p.get("selected", True)
         ]
+        relative_entries = [
+            e.model_copy(update={"path": str(PurePosixPath(e.path).relative_to(root))})
+            for e in entries
+        ]
+        aliases = {
+            path: image_alias(path, asset_kind, relative_entries, record.media_path)
+            for path, asset_kind, _ in plan
+        }
+        plan = [(aliases[path], asset_kind, needed) for path, asset_kind, needed in plan]
+        sources = {aliases.get(path, path): value for path, value in sources.items()}
+        for person in record.cast:
+            if person.get("path") in aliases:
+                person["path"] = aliases[person["path"]]
+        with self.db.sessions.begin() as session:
+            session.get(MovieRecord, claim.package_id).cast = record.cast
         plan_changed = False
         with self.db.sessions.begin() as session:
             task, package = self.queue._owned(session, claim)
             self.queue._current(session, task, package)
             required = [path for path, _, needed in plan if needed]
+            previous_assets = list(
+                session.scalars(select(Asset).where(Asset.package_id == package.id))
+            )
+            old_shape = Counter(
+                (
+                    a.kind,
+                    str(PurePosixPath(a.relative_path).with_suffix(""))
+                    if a.kind in {"nfo", "actor"}
+                    else a.media_id,
+                    a.season,
+                )
+                for a in previous_assets
+                if a.relative_path in package.base_required
+            )
+            new_shape = Counter(
+                (
+                    k,
+                    str(PurePosixPath(p).with_suffix(""))
+                    if k in {"nfo", "actor"}
+                    else sources.get(p, {}).get("media_id"),
+                    sources.get(p, {}).get("season"),
+                )
+                for p, k, needed in plan
+                if needed
+            )
             if (
                 package.base_required
                 and package.base_required != required
+                and old_shape != new_shape
                 and any(
                     a.status == "remote_verified" and a.verified_version == package.context_version
-                    for a in session.scalars(select(Asset).where(Asset.package_id == package.id))
+                    for a in previous_assets
                 )
             ):
                 invalidate_package(package, "asset_plan_changed")
                 plan_changed = True
             package.base_required, package.base_status = required, "processing"
             for old in session.scalars(select(Asset).where(Asset.package_id == package.id)):
-                old.required = False
+                if old.kind in {"nfo", "poster", "fanart", "actor", "season_poster", "thumb"}:
+                    old.required = False
             for path, kind, needed in plan:
                 asset = session.scalar(
                     select(Asset).where(Asset.package_id == package.id, Asset.relative_path == path)
@@ -387,6 +442,10 @@ class MoviePipeline:
             self.metadata_factory(config, self.cache) as metadata,
         ):
             entries = await self.source(claim, storage, config)
+            if package.kind == "movie" and config.scrape_actor_images:
+                for entry in list(entries):
+                    if entry.is_dir and entry.path == package.remote_path + "/.actors":
+                        entries += await storage.list(entry.path)
             if only_path is None:
                 movie, plan, sources = self.freeze(claim, record, config, entries)
             else:
@@ -524,13 +583,11 @@ class MoviePipeline:
                     Asset.package_id == claim.package_id, Asset.relative_path == path
                 )
             )
-            if (
+            expected, key, managed = asset.sha256, asset.cache_key, asset.managed
+            previously_verified = (
                 asset.status == "remote_verified"
                 and asset.verified_version == claim.context_version
-                and self.cache.get(asset.cache_key)
-            ):
-                return
-            expected, key, managed = asset.sha256, asset.cache_key, asset.managed
+            )
             source_tmdb_id = asset.source_tmdb_id
         remote = package_path + "/" + path
         try:
@@ -549,8 +606,10 @@ class MoviePipeline:
             )
             self.cache.put(body)  # immutable original/backup, before any interpretation
             if managed and expected and sha256(body) != expected:
-                # A previously interrupted PUT must not adopt different bytes as success.
-                raise ProviderError("upload_verification_failed")
+                if not previously_verified:
+                    # An interrupted PUT must not adopt different bytes as success.
+                    raise ProviderError("upload_verification_failed")
+                managed = False
             self.validate(
                 body, kind, tmdb_id, imdb_id, nfo_tag=nfo_tag, season=season, episode=episode
             )

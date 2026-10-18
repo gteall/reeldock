@@ -21,6 +21,7 @@ import { ProbeEvidence } from './EpisodesPanel'
 import { Preview, Status } from './MediaAssets'
 import { artwork, scrapedPackages } from './posters'
 import { SubtitleSearch } from './SubtitleSearch'
+import { DeleteMetadataButton } from './DeleteMetadataButton'
 
 const assetNames: Record<string, string> = {
   nfo: 'NFO 元数据',
@@ -31,6 +32,7 @@ const assetNames: Record<string, string> = {
   thumb: '剧集缩略图',
   subtitle: '字幕',
   manifest: '最终清单',
+  subtitle_marker: '内置字幕标志',
 }
 
 export function FilmDetailPage({ id }: { id: string }) {
@@ -78,6 +80,15 @@ export function FilmDetailPage({ id }: { id: string }) {
       <div className="film-navigation">
         {back}
         <Space wrap>
+          <DeleteMetadataButton
+            key={film.id}
+            film={film}
+            busy={
+              film.lease_active ||
+              ['queued', 'running', 'retry_wait'].includes(film.task_status ?? '')
+            }
+            refresh={() => query.refetch()}
+          />
           <Button href="#/movies">进入刮削工作台</Button>
           <Button
             icon={<ReloadOutlined />}

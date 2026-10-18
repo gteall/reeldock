@@ -19,6 +19,7 @@ from reeldock.domain import ConfigUpdate, ProviderError, normalize_path
 from reeldock.episodes import parse_episode
 from reeldock.events import stream_events
 from reeldock.manual_subtitles import register_subtitle_routes
+from reeldock.metadata_reset import register_metadata_routes
 from reeldock.models import (
     Admin,
     ArchiveIntent,
@@ -175,6 +176,7 @@ def create_app(
         return auth
 
     register_subtitle_routes(app, mutation)
+    register_metadata_routes(app, mutation)
 
     @app.get("/api/health")
     def health():
@@ -301,6 +303,8 @@ def create_app(
             raise HTTPException(422, "package_outside_scrape_directories")
         try:
             task_id = app.state.queue.submit(body.kind, path, body.idempotency_key, revision)
+        except ProviderError as error:
+            raise HTTPException(409, error.code) from None
         except ValueError:
             raise HTTPException(409, "idempotency_key_conflict") from None
         return {"task_id": task_id, "implementation": body.kind}
@@ -675,6 +679,7 @@ def create_app(
                 "thumb",
                 "subtitle",
                 "manifest",
+                "subtitle_marker",
             }:
                 raise HTTPException(404, "preview_not_available")
             body = app.state.worker.movies.cache.get(asset.cache_key)
@@ -691,7 +696,7 @@ def create_app(
             return Response(
                 body,
                 media_type="text/plain; charset=utf-8"
-                if asset.kind in {"nfo", "subtitle", "manifest"}
+                if asset.kind in {"nfo", "subtitle", "manifest", "subtitle_marker"}
                 else "image/jpeg",
                 headers={"Content-Security-Policy": "default-src 'none'; sandbox"},
             )
