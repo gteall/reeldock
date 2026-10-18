@@ -6,6 +6,8 @@
 
 生产部署见 [Docker / 飞牛指南](docs/deployment.md)，维护见 [备份、升级与回退](docs/upgrade.md)，复验见 [P5 验证指南](docs/p5-tools.md)。
 
+管理界面的「海报墙」集中展示基础资产已远程验证或已归档的电影与电视剧，支持片名、演员、导演搜索，类型和归档状态筛选，以及片名、年份和评分排序。点击海报进入独立详情页，查看简介、评分、演职人员、随片资产预览、字幕策略与归档记录；剧集可逐集查看。详情链接支持刷新和浏览器前进、后退，图片通过已登录的本地缓存接口读取。
+
 本机快速开始：`uv sync --frozen` → `uv run reeldock init-admin`；在 frontend 执行 `pnpm install --frozen-lockfile && pnpm build`，再从仓库根目录运行 `uv run uvicorn reeldock.app:app --host 127.0.0.1 --port 8000 --workers 1 --no-access-log`。访问 `http://127.0.0.1:8000`。完整环境、容器及测试步骤见 [开发指南](docs/development.md)。
 
 OpenList 可保持 **302 直链模式**。“下载重定向主机限制”默认留空，自动跟随服务返回的下载地址，无需填写 115 下载域名；填写列表才限制跳转主机。跨域不会携带 WebDAV 账号密码或 Cookie。

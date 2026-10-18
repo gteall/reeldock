@@ -6,10 +6,10 @@
 
 安装 Docker Engine 和 Compose v2 或更新版本。将仓库放到 NAS 本地磁盘，创建专用数据目录，不将 `/data` 放到 WebDAV、SMB、NFS 或其它网络文件系统。
 
-当前候选源码位于 [草稿 PR #1](https://github.com/gteall/reeldock/pull/1) 的 `codex/p1-foundation` 分支。使用已审阅的提交；首次获取候选源码可执行：
+当前源码位于 `main` 分支。首次获取源码可执行：
 
 ```bash
-git clone --branch codex/p1-foundation https://github.com/gteall/reeldock.git
+git clone --branch main https://github.com/gteall/reeldock.git
 cd reeldock
 ```
 

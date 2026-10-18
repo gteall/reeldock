@@ -27,6 +27,26 @@ docker compose run --rm --no-deps reeldock backup \
 
 ## 升级
 
+### 从源码更新 NAS 部署
+
+在 NAS 已部署的仓库目录执行，沿用现有 `.env`、数据目录和缓存目录。以下适用于仓库自带的 `compose.yaml`；使用自定义 Compose 文件时，沿用原来的 `-f` 参数。
+
+```bash
+git fetch origin &&
+git switch main &&
+git pull --ff-only origin main &&
+docker compose config --quiet &&
+docker compose build reeldock &&
+docker compose up -d --no-build reeldock
+
+docker compose ps
+docker compose logs --tail 100 reeldock
+```
+
+启动时自动执行幂等迁移。更新后刷新浏览器即可载入新前端；海报墙入口位于侧栏。已有管理员不需要重新初始化。需要升级前备份或回退时，按本页对应流程操作。
+
+### 迁移与镜像管理
+
 1. 记录旧镜像 ID、Compose / `.env`、当前版本及已有待恢复 MOVE 意图。保留旧镜像。
 2. 停止应用并完成备份，复制备份到另一个本地/离线位置。
 3. 取得已验证的候选镜像或构建所审阅的源码。发布镜像应固定版本标签或 digest，不依赖 latest。

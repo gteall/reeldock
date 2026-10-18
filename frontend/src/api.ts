@@ -34,6 +34,7 @@ const messages: Record<string, string> = {
   tmdb_credentials_required: '请先保存 TMDB 凭证',
   tmdb_timeout: 'TMDB 连接超时，请检查网络或代理',
   tmdb_not_found: 'TMDB ID 不存在，请核对电影与剧集类型',
+  movie_not_found: '影片不存在或已被移除',
   tmdb_match_needs_review: '匹配存在歧义，请选择候选或指定电影 / 剧 ID',
   tmdb_id_conflict: '文件名、现存 NFO 与指定 ID 冲突，已保留原件',
   existing_nfo_id_missing: '已有 NFO 缺少明确 TMDB ID，已保留原件，请人工核对',
@@ -184,6 +185,7 @@ export interface Asset {
   managed: boolean
   sha256: string | null
   preview: string | null
+  remote_verified_at: number | null
 }
 export interface MediaItem {
   id: string
@@ -203,6 +205,19 @@ export interface MediaItem {
   error_code: string | null
 }
 export interface Film {
+  metadata: {
+    source: string | null
+    original_title: string
+    overview: string
+    tagline: string
+    release_date: string
+    genres: string[]
+    rating: number | null
+    votes: number
+    directors: string[]
+    writers: string[]
+    imdb_id: string | null
+  }
   kind: 'movie' | 'tv'
   context_version: number
   lease_active: boolean

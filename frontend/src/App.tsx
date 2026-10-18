@@ -24,6 +24,7 @@ import {
   ApartmentOutlined,
   CheckCircleOutlined,
   CloudServerOutlined,
+  AppstoreOutlined,
   InfoCircleOutlined,
   LogoutOutlined,
   PlayCircleOutlined,
@@ -36,6 +37,10 @@ import { MoviesPage } from './MoviesPage'
 import { connectEvents } from './liveEvents'
 import type { LiveState } from './liveEvents'
 import { AboutPage } from './AboutPage'
+import { PosterWallPage } from './PosterWallPage'
+import type { PosterWallView } from './PosterWallPage'
+import { FilmDetailPage } from './FilmDetailPage'
+import { readRoute } from './navigation'
 
 const { Title, Text, Paragraph } = Typography
 const stageNames: Record<string, string> = {
@@ -652,7 +657,20 @@ function EventsPage() {
 export default function App() {
   const queryClient = useQueryClient()
   const { message } = AntApp.useApp()
-  const [page, setPage] = useState('settings')
+  const [route, setRoute] = useState(() => readRoute())
+  const { page, filmId } = route
+  const [posterView, setPosterView] = useState<PosterWallView>({
+    search: '',
+    kind: 'all',
+    state: 'all',
+    sort: 'title',
+    page: 1,
+  })
+  useEffect(() => {
+    const updateRoute = () => setRoute(readRoute())
+    window.addEventListener('hashchange', updateRoute)
+    return () => window.removeEventListener('hashchange', updateRoute)
+  }, [])
   const [liveState, setLiveState] = useState<LiveState>('offline')
   const session = useQuery({
     queryKey: ['session'],
@@ -722,8 +740,11 @@ export default function App() {
           theme="dark"
           mode="inline"
           selectedKeys={[page]}
-          onClick={({ key }) => setPage(key)}
+          onClick={({ key }) => {
+            window.location.hash = `#/${key}`
+          }}
           items={[
+            { key: 'posters', icon: <AppstoreOutlined />, label: '海报墙' },
             { key: 'movies', icon: <PlayCircleOutlined />, label: '电影与剧集' },
             { key: 'settings', icon: <SettingOutlined />, label: '连接与配置' },
             { key: 'tasks', icon: <ApartmentOutlined />, label: '任务中心' },
@@ -747,15 +768,19 @@ export default function App() {
         <header>
           <span>
             影坞控制台 <span className="header-slash">/</span>{' '}
-            {page === 'about'
-              ? '关于'
-              : page === 'movies'
-                ? '电影'
-                : page === 'settings'
-                  ? '配置'
-                  : page === 'tasks'
-                    ? '任务'
-                    : '事件'}
+            {page === 'posters'
+              ? filmId
+                ? '影片详情'
+                : '海报墙'
+              : page === 'about'
+                ? '关于'
+                : page === 'movies'
+                  ? '电影'
+                  : page === 'settings'
+                    ? '配置'
+                    : page === 'tasks'
+                      ? '任务'
+                      : '事件'}
           </span>
           <Space>
             <Text type="secondary">{session.data.username}</Text>
@@ -769,33 +794,47 @@ export default function App() {
             <div>
               <span className="eyebrow">REELDOCK / {page.toUpperCase()}</span>
               <Title level={2}>
-                {page === 'about'
-                  ? '关于影坞'
-                  : page === 'movies'
-                    ? '电影与剧集'
-                    : page === 'settings'
-                      ? '连接与配置'
-                      : page === 'tasks'
-                        ? '任务中心'
-                        : '运行事件'}
+                {page === 'posters'
+                  ? filmId
+                    ? '影片详情'
+                    : '海报墙'
+                  : page === 'about'
+                    ? '关于影坞'
+                    : page === 'movies'
+                      ? '电影与剧集'
+                      : page === 'settings'
+                        ? '连接与配置'
+                        : page === 'tasks'
+                          ? '任务中心'
+                          : '运行事件'}
               </Title>
               <Paragraph type="secondary">
-                {page === 'about'
-                  ? '版本、数据来源与使用说明。'
-                  : page === 'movies'
-                    ? '查看匹配、随片图片和基础资产远程验证结果。'
-                    : page === 'settings'
-                      ? '连接远程存储，为媒体工作流准备一个可靠的起点。'
-                      : page === 'tasks'
-                        ? '查看持久化阶段、检查点与错误，按需暂停或重试。'
-                        : '每一次状态变化都有记录，重启之后仍可追溯。'}
+                {page === 'posters'
+                  ? filmId
+                    ? '影片资料、随片资产与刮削归档记录。'
+                    : '已刮削的电影与剧集，一目了然。点击海报，发现更多影片信息。'
+                  : page === 'about'
+                    ? '版本、数据来源与使用说明。'
+                    : page === 'movies'
+                      ? '查看匹配、随片图片和基础资产远程验证结果。'
+                      : page === 'settings'
+                        ? '连接远程存储，为媒体工作流准备一个可靠的起点。'
+                        : page === 'tasks'
+                          ? '查看持久化阶段、检查点与错误，按需暂停或重试。'
+                          : '每一次状态变化都有记录，重启之后仍可追溯。'}
               </Paragraph>
             </div>
             <Tag icon={<CheckCircleOutlined />} color="success">
               本地持久化
             </Tag>
           </div>
-          {page === 'about' ? (
+          {page === 'posters' ? (
+            filmId ? (
+              <FilmDetailPage key={filmId} id={filmId} />
+            ) : (
+              <PosterWallPage view={posterView} onChange={setPosterView} />
+            )
+          ) : page === 'about' ? (
             <AboutPage />
           ) : page === 'movies' ? (
             <MoviesPage />

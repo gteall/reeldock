@@ -11,6 +11,19 @@ from reeldock.security import init_admin
 
 def test_p2_movie_api_match_preview_and_auth(runtime, config_body):
     dav, tmdb = MemoryDAV(), FakeTMDB()
+    tmdb.movies[0] = tmdb.movies[0].model_copy(
+        update={
+            "original_title": "Original Example",
+            "tagline": "A test story",
+            "release_date": "2020-06-12",
+            "genres": ["Drama", "Adventure"],
+            "directors": ["Example Director"],
+            "writers": ["Example Writer"],
+            "rating": 8.4,
+            "votes": 1234,
+            "imdb_id": "tt1234567",
+        }
+    )
     app = create_app(runtime, storage_factory=dav, metadata_factory=tmdb)
     with TestClient(app) as client:
         assert client.get("/api/movies").status_code == 401
@@ -42,6 +55,9 @@ def test_p2_movie_api_match_preview_and_auth(runtime, config_body):
                     session.scalar(select(MovieRecord)).stable_since = time.time() - 2
         movie = client.get("/api/movies").json()["items"][0]
         assert movie["scan_status"] == "stable"
+        assert movie["metadata"]["overview"] == ""
+        assert movie["metadata"]["genres"] == []
+        assert movie["metadata"]["rating"] is None
         assert (
             client.put(f"/api/movies/{movie['id']}/match", json={"tmdb_id": "bad"}).status_code
             == 422
@@ -66,6 +82,23 @@ def test_p2_movie_api_match_preview_and_auth(runtime, config_body):
         assert task["status"] == "completed", task
         movie = client.get(f"/api/movies/{movie['id']}").json()
         assert movie["original_language"] == "en" and movie["subtitle_status"] == "pending"
+        assert movie["metadata"] == {
+            "source": "tmdb",
+            "original_title": "Original Example",
+            "overview": "中文 & plot",
+            "tagline": "A test story",
+            "release_date": "2020-06-12",
+            "genres": ["Drama", "Adventure"],
+            "rating": 8.4,
+            "votes": 1234,
+            "directors": ["Example Director"],
+            "writers": ["Example Writer"],
+            "imdb_id": "tt1234567",
+        }
+        listed = client.get("/api/packages").json()["items"][0]
+        assert listed["metadata"] == movie["metadata"]
+        assert client.get(f"/api/packages/{movie['id']}").json()["metadata"] == movie["metadata"]
+        assert "poster_path" not in movie["metadata"]
         nfo = next(a for a in movie["assets"] if a["kind"] == "nfo")
         preview = client.get(nfo["preview"])
         assert preview.status_code == 200 and "text/plain" in preview.headers["content-type"]
