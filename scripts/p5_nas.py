@@ -284,6 +284,8 @@ def check_services(remote, image):
     fields = {
         "token": values.get("P2_TMDB_TOKEN"),
         "tmdb_proxy_url": remote.values.get("P5_TMDB_PROXY_URL"),
+        "assrt_token": remote.values.get("P5_ASSRT_TOKEN"),
+        "subtitle_keyword": remote.values.get("P5_SUBTITLE_KEYWORD"),
     }
     code = (Path(__file__).parent / "p5_network.py").read_text()
     result = remote.run(
@@ -497,7 +499,7 @@ def run(args):
         passed = all(
             report[key]["status"] == "passed" for key in ["container", "compose", "openlist"]
         ) and all(
-            report["external_services"][key]["status"] == "passed" for key in ["tmdb", "shooter"]
+            report["external_services"][key]["status"] == "passed" for key in ["tmdb", "assrt"]
         )
         if args.webdav_write:
             storage = report["real_storage_packages"]

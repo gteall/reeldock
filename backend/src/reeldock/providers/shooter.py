@@ -1,4 +1,4 @@
-"""Historical Shooter JSON API; untrusted URLs never inherit storage credentials."""
+"""Legacy verification tools only. Production subtitle tasks exclusively use ASSRT."""
 
 import json
 import re
@@ -36,7 +36,7 @@ class ShooterProvider:
         url = urlsplit(target)
         if (
             url.scheme != "https"
-            or url.hostname not in self.config.subtitle_download_hosts
+            or url.hostname not in {"www.shooter.cn", "shooter.cn"}
             or url.port not in {None, 443}
             or url.username
             or url.password

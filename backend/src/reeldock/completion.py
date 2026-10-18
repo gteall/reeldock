@@ -11,13 +11,11 @@ from reeldock.domain import ProviderError, Stage
 from reeldock.models import Asset, Media, Package, TaskStep
 from reeldock.probe import MediaProbe, validate_vobsub_pair
 from reeldock.providers.assrt import AssrtProvider
-from reeldock.providers.shooter import ShooterProvider
 from reeldock.queue import SUBTITLE_PASSED, emit, gate
 from reeldock.subtitles import (
     BITMAP_SUBTITLE_CODECS,
     MAX_SUBTITLE,
     default_audio,
-    fingerprint,
     matches_external,
     original_class,
     simplified_track,
@@ -35,7 +33,7 @@ class CompletionPipeline:
         movies,
         *,
         probe=None,
-        subtitle_factory=ShooterProvider,
+        subtitle_factory=AssrtProvider,
         manual_subtitle_factory=AssrtProvider,
     ):
         self.movies, self.db, self.queue = movies, movies.db, movies.queue
@@ -577,38 +575,48 @@ class CompletionPipeline:
                     },
                 )
         await self.verify_media(claim, storage, media)
-        hash_value = await fingerprint(storage, media, lambda: self.check(claim))
-        await self.verify_media(claim, storage, media)
+        keyword = PurePosixPath(media.remote_path).stem
+        with self.db.sessions.begin() as session:
+            self.queue._owned(session, claim)
+            row = session.get(Media, media.id)
+            row.probe_evidence = {
+                **row.probe_evidence,
+                "subtitle_search": {"source": "assrt", "keyword": keyword},
+            }
+        attempted = False
         async with self.subtitle_factory(config) as provider:
             self.check(claim)
-            candidates = await provider.search(
-                hash_value,
+            async for candidate in provider.automatic_candidates(
+                keyword,
                 {
                     "filename": PurePosixPath(media.remote_path).name,
                     "season": media.season,
                     "episode": media.episode,
                 },
-            )
-            if not candidates:
-                raise ProviderError("subtitle_no_match")
-            for candidate in candidates:
+            ):
+                attempted = True
                 self.check(claim)
                 try:
-                    raw = await provider.download(candidate)
-                    self.movies.cache.put(raw)  # Preserve the pre-delay download.
-                    body, evidence = validate_subtitle(
-                        raw, candidate.format, data["duration"], delay_ms=candidate.delay_ms
+                    raw = await provider.download(
+                        candidate["candidate_id"], candidate["index"], candidate["name"]
                     )
+                    self.movies.cache.put(raw)
+                    body, evidence = validate_subtitle(raw, candidate["format"], data["duration"])
                 except ProviderError as error:
+                    if error.retryable or error.code in {
+                        "assrt_token_required",
+                        "assrt_token_invalid",
+                    }:
+                        raise
                     failures.append(error.code)
                     continue
                 # Never label an unclassified download as simplified Chinese.
                 filename = (
                     PurePosixPath(media.remote_path).stem
-                    + ".shooter."
+                    + ".assrt."
                     + sha256(body)[:12]
                     + "."
-                    + candidate.format
+                    + candidate["format"]
                 )
                 parent = PurePosixPath(media.remote_path).parent.relative_to(package.remote_path)
                 path = str(parent / filename)
@@ -619,8 +627,19 @@ class CompletionPipeline:
                     media.id,
                     claim,
                     "downloaded_verified",
-                    evidence={"audio": audio, "download": evidence, "path": path},
+                    evidence={
+                        "audio": audio,
+                        "download": evidence,
+                        "path": path,
+                        "source": "assrt",
+                        "keyword": keyword,
+                        "candidate_id": candidate["candidate_id"],
+                        "file_name": candidate["name"],
+                        "manual": False,
+                    },
                 )
+        if not attempted:
+            raise ProviderError("subtitle_no_match")
         raise ProviderError(failures[-1] if failures else "subtitle_no_valid_download")
 
     async def external_failure(self, claim, path, code):

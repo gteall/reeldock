@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from typing import Protocol
 
 from reeldock.domain import (
@@ -8,7 +9,6 @@ from reeldock.domain import (
     RemoteEntry,
     Season,
     Series,
-    SubtitleCandidate,
 )
 
 
@@ -35,7 +35,9 @@ class MetadataProvider(Protocol):
 
 
 class SubtitleProvider(Protocol):
-    async def search(
-        self, fingerprint: str, episode_context: dict | None
-    ) -> list[SubtitleCandidate]: ...
-    async def download(self, candidate: SubtitleCandidate) -> bytes: ...
+    async def search(self, keyword: str) -> list[dict]: ...
+    async def files(self, identifier: str) -> list[dict]: ...
+    def automatic_candidates(
+        self, keyword: str, episode_context: dict | None
+    ) -> AsyncIterator[dict]: ...
+    async def download(self, identifier: str, file_index: int, file_name: str) -> bytes: ...

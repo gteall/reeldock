@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 
 from p2_support import FakeTMDB, MemoryDAV
 
-from reeldock.domain import ConfigUpdate, ProviderError, SubtitleCandidate
+from reeldock.domain import ConfigUpdate, ProviderError
 from reeldock.runtime import Runtime
 from reeldock.worker import Worker
 
@@ -122,23 +122,19 @@ class Shooter:
     async def __aexit__(self, *args):
         pass
 
-    async def search(self, fingerprint, episode_context=None):
+    async def automatic_candidates(self, keyword, episode_context=None):
         self.calls["search"] += 1
-        self.dav.order.append("shooter")
-        return (
-            []
-            if self.empty
-            else [
-                SubtitleCandidate(
-                    source="shooter",
-                    external_id="1",
-                    download_url="https://shooter.cn/sub.srt",
-                    format="srt",
-                )
-            ]
-        )
+        self.dav.order.append("assrt")
+        if not self.empty:
+            yield {
+                "candidate_id": "100001",
+                "index": 0,
+                "name": "subtitle.srt",
+                "format": "srt",
+                "keyword": keyword,
+            }
 
-    async def download(self, candidate):
+    async def download(self, identifier, file_index, file_name):
         self.calls["download"] += 1
         self.dav.order.append("download")
         return self.content

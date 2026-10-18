@@ -81,10 +81,11 @@ class TVShooter(Shooter):
         self.missing = set()
         self.queries = Counter()
 
-    async def search(self, fingerprint, episode_context=None):
+    async def automatic_candidates(self, keyword, episode_context=None):
         self.queries[episode_context["filename"]] += 1
-        results = await super().search(fingerprint, episode_context)
-        return [] if episode_context["episode"] in self.missing else results
+        async for result in super().automatic_candidates(keyword, episode_context):
+            if episode_context["episode"] not in self.missing:
+                yield result
 
 
 async def setup_tv(foundation, tmp_path, original="zh", files=None):

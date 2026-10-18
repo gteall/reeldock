@@ -75,7 +75,7 @@ def p2_forbidden_services(request, monkeypatch):
     original_send = httpx.AsyncClient.send
 
     async def send(client, request, *args, **kwargs):
-        if "shooter" in request.url.host:
+        if "shooter" in request.url.host or "assrt" in request.url.host:
             pytest.fail("P2 must not contact Subtitle Provider")
         return await original_send(client, request, *args, **kwargs)
 

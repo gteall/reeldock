@@ -1,17 +1,56 @@
 """ASSRT keyword search and individual subtitle files, never archive extraction."""
 
 import json
+import re
 from pathlib import PurePosixPath
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
 from reeldock.domain import ProviderError
+from reeldock.episodes import MULTI, PAIR, parse_episode
 from reeldock.providers.webdav import WebDAVProvider
 from reeldock.subtitles import MAX_SUBTITLE
 
 API = "https://api.assrt.net/v1/sub/"
 FORMATS = {"srt", "ass", "ssa"}
+
+
+def language_rank(value):
+    if re.search(
+        r"简体|簡體|简中|簡中|简英|簡英|simplified|(?<![a-z])chs(?![a-z])|zh[-_](?:hans|cn)",
+        value,
+        re.I,
+    ):
+        return 0
+    if re.search(
+        r"繁体|繁體|繁中|繁英|traditional|(?<![a-z])cht(?![a-z])|zh[-_](?:hant|tw)", value, re.I
+    ):
+        return 2
+    if re.search(r"双语|雙語|中英|中文|chinese|bilingual", value, re.I):
+        return 1
+    return 3
+
+
+def episode_pairs(value):
+    return {
+        tuple(int(group) for group in match.groups() if group is not None)
+        for match in PAIR.finditer(value)
+    }
+
+
+def episode_file_matches(name, description, context):
+    if context.get("season") is None or context.get("episode") is None:
+        return True
+    target = context["season"], context["episode"]
+    normalized = name.replace("\\", "/").lstrip("/")
+    try:
+        return parse_episode(f"Season {target[0]:02d}/" + normalized, ".") == target
+    except ProviderError as error:
+        if error.code != "episode_number_unknown":
+            return False
+        # Generic language filenames can inherit an explicit single-episode release.
+        return not MULTI.search(description) and episode_pairs(description) == {target}
 
 
 class AssrtProvider:
@@ -75,8 +114,11 @@ class AssrtProvider:
         except (ValueError, TypeError, AttributeError):
             raise ProviderError("subtitle_invalid_candidates") from None
 
-    async def search(self, keyword):
-        rows = await self.request("search", {"q": keyword, "cnt": 15})
+    async def search(self, keyword, *, filename=False):
+        params = {"q": keyword, "cnt": 15}
+        if filename:
+            params["no_muxer"] = 1
+        rows = await self.request("search", params)
         results = []
         for row in rows[:15]:
             identifier = str(row.get("id", ""))
@@ -123,6 +165,40 @@ class AssrtProvider:
             )
         return results
 
+    async def automatic_candidates(self, keyword, episode_context=None):
+        context = episode_context or {}
+        results = await self.search(keyword, filename=True)
+        results.sort(key=lambda item: language_rank(item["language"] + " " + item["title"]))
+        for result in results[:5]:
+            description = result["title"] + " " + result["release"]
+            pairs = episode_pairs(description)
+            target = context.get("season"), context.get("episode")
+            if (
+                None not in target
+                and len(pairs) == 1
+                and not MULTI.search(description)
+                and pairs != {target}
+            ):
+                continue
+            try:
+                files = await self.files(result["id"])
+            except ProviderError as error:
+                if error.code == "subtitle_candidate_expired":
+                    continue
+                raise
+            files = [
+                item for item in files if episode_file_matches(item["name"], description, context)
+            ]
+            files.sort(key=lambda item: language_rank(item["name"]))
+            for item in files[:10]:
+                yield {
+                    "candidate_id": result["id"],
+                    "index": item["index"],
+                    "name": item["name"],
+                    "format": item["format"],
+                    "keyword": keyword,
+                }
+
     @staticmethod
     def allowed(url):
         try:
@@ -166,6 +242,8 @@ class AssrtProvider:
                         url = urljoin(url, response.headers["location"])
                         continue
                     if response.status_code != 200:
+                        if response.status_code == 429:
+                            raise ProviderError("assrt_rate_limited", retryable=True)
                         raise ProviderError(
                             "subtitle_http_error", retryable=response.status_code >= 500
                         )

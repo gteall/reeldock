@@ -45,8 +45,14 @@ export function AboutPage() {
           This product uses the TMDB API but is not endorsed or certified by TMDB.
         </Paragraph>
         <Paragraph type="secondary">
-          TMDB 标识随应用提供，显示此页面不需要访问 TMDB 图片服务。自动字幕由独立射手 Provider
-          获取；内容有效性与时间轴会单独校验。
+          TMDB 标识随应用提供，显示此页面不需要访问 TMDB 图片服务。
+        </Paragraph>
+        <Paragraph type="secondary">
+          自动和手动字幕服务由{' '}
+          <Link href="https://assrt.net" target="_blank" rel="noreferrer">
+            assrt.net
+          </Link>{' '}
+          提供，共用设置中的 ASSRT Token；内容有效性与时间轴会单独校验。
         </Paragraph>
       </Card>
     </Space>

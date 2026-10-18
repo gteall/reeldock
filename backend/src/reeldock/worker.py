@@ -8,7 +8,6 @@ from reeldock.completion import CompletionPipeline
 from reeldock.domain import ProviderError
 from reeldock.pipeline import MoviePipeline
 from reeldock.providers.assrt import AssrtProvider
-from reeldock.providers.shooter import ShooterProvider
 from reeldock.providers.tmdb import TMDBProvider
 from reeldock.providers.webdav import WebDAVProvider
 from reeldock.queue import Claim, Queue
@@ -28,7 +27,7 @@ class Worker:
         storage_factory=WebDAVProvider,
         metadata_factory=TMDBProvider,
         probe=None,
-        subtitle_factory=ShooterProvider,
+        subtitle_factory=AssrtProvider,
         manual_subtitle_factory=AssrtProvider,
     ):
         self.queue, self.settings, self.runtime = queue, settings, runtime

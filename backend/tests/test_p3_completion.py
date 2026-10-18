@@ -30,7 +30,7 @@ async def test_chinese_zero_calls_and_completes_in_place(foundation, tmp_path, c
     assert parsed["subtitle_evidence"]["actual_audio"] == "not_probed"
 
 
-async def test_all_base_readbacks_precede_first_probe_and_shooter(foundation, tmp_path):
+async def test_all_base_readbacks_precede_first_probe_and_assrt(foundation, tmp_path):
     env = await setup(foundation, tmp_path)
     _, _, _, dav, _, probe, shooter, _, _ = env
     task, package = await run(env)
@@ -38,9 +38,10 @@ async def test_all_base_readbacks_precede_first_probe_and_shooter(foundation, tm
     first = dav.order.index("probe")
     for name in ["poster.jpg", "fanart.jpg", "Actor_One.jpg", "Example.2020.1080p.nfo"]:
         assert dav.order.index("readback:" + name) < first
-    assert dav.order.index("probe") < dav.order.index("range") < dav.order.index("shooter")
+    assert dav.order.index("probe") < dav.order.index("assrt")
+    assert "range" not in dav.order
     assert package.subtitle_status == "downloaded_verified"
-    assert dav.calls["media_reads"] == 4
+    assert dav.calls["media_reads"] == 0
     assert shooter.calls == {"search": 1, "download": 1}
 
 
@@ -148,7 +149,7 @@ async def test_labeled_bitmap_subtitles_skip_extraction_and_download(
     }
     assert probe.calls == {"probe": 1} and not shooter.calls
     assert dav.calls["media_reads"] == 0
-    assert not any(".shooter." in path for path in dav.files)
+    assert not any(".assrt." in path for path in dav.files)
 
 
 async def test_failed_pgs_download_retries_using_saved_stream_labels(

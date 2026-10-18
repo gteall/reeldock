@@ -61,9 +61,6 @@ class AppConfig(BaseModel):
     actor_limit: int = Field(default=20, ge=0, le=500)
     scrape_actor_images: bool = False
     actor_policy: str = Field(default="available_only", pattern=r"^(available_only|strict)$")
-    subtitle_download_hosts: list[str] = Field(
-        default_factory=lambda: ["www.shooter.cn", "shooter.cn"], max_length=20
-    )
 
     _url = field_validator("webdav_url")(validate_url)
 
@@ -101,7 +98,7 @@ class AppConfig(BaseModel):
     def proxy(cls, value: str | None) -> str | None:
         return validate_url(value) if value else None
 
-    @field_validator("redirect_hosts", "subtitle_download_hosts")
+    @field_validator("redirect_hosts")
     @classmethod
     def hosts(cls, values: list[str]) -> list[str]:
         for value in values:

@@ -15,8 +15,8 @@ const messages: Record<string, string> = {
   default_audio_unknown: '无法确认实际默认音轨语言，需要人工确认',
   default_audio_ambiguous: '默认音轨或解说轨存在冲突，需要人工确认',
   embedded_subtitle_ambiguous: '内置字幕繁简标签冲突，需要人工确认',
-  subtitle_no_match: '射手没有匹配字幕，请人工补齐后重试',
-  assrt_token_required: '请先在设置中配置 ASSRT Token，再搜索字幕',
+  subtitle_no_match: 'ASSRT 没有匹配字幕，可在详情中修改关键词并手动搜索',
+  assrt_token_required: '请先在设置中配置 ASSRT Token，用于自动下载和手动搜索字幕',
   assrt_token_invalid: 'ASSRT Token 无效，请在设置中检查或更新',
   assrt_rate_limited: 'ASSRT 搜索次数已达限制，请稍后重试',
   assrt_unavailable: 'ASSRT 暂时不可用，请稍后重试',
@@ -161,7 +161,6 @@ export interface Config {
   actor_limit?: number
   actor_policy?: string
   scrape_actor_images?: boolean
-  subtitle_download_hosts?: string[]
   policy_version?: number
 }
 export interface Task {

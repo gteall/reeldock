@@ -186,8 +186,6 @@ function SettingsPage() {
         ...query.data,
         probe_max_mib: (query.data.probe_max_bytes ?? 67108864) / 1048576,
         redirect_hosts_text: query.data.redirect_hosts?.join(', ') ?? '',
-        subtitle_download_hosts_text:
-          query.data.subtitle_download_hosts?.join(', ') ?? 'www.shooter.cn, shooter.cn',
         chinese_languages_text: query.data.chinese_languages?.join(', ') ?? 'zh, cn',
         webdav_password: '',
         tmdb_token: '',
@@ -199,13 +197,7 @@ function SettingsPage() {
   }, [query.data, form])
   const save = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
-      const {
-        redirect_hosts_text,
-        chinese_languages_text,
-        subtitle_download_hosts_text,
-        probe_max_mib,
-        ...rest
-      } = values
+      const { redirect_hosts_text, chinese_languages_text, probe_max_mib, ...rest } = values
       return api<Config>('/config', {
         method: 'PUT',
         body: JSON.stringify({
@@ -217,10 +209,6 @@ function SettingsPage() {
             .map((s) => s.trim())
             .filter(Boolean),
           chinese_languages: String(chinese_languages_text ?? '')
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean),
-          subtitle_download_hosts: String(subtitle_download_hosts_text ?? '')
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean),
@@ -423,7 +411,7 @@ function SettingsPage() {
         <Card title="字幕下载来源" className="form-card">
           <Form.Item
             name="assrt_token"
-            label="ASSRT Token（手动搜索字幕）"
+            label="ASSRT Token（自动下载与手动搜索）"
             extra={
               query.data?.assrt_token_set
                 ? '已配置 · 留空保留现有 Token'
@@ -436,7 +424,7 @@ function SettingsPage() {
             <Checkbox>清除 ASSRT Token</Checkbox>
           </Form.Item>
           <Paragraph type="secondary">
-            用于影片详情中的关键词搜索与手动选择字幕。
+            自动下载和影片详情中的手动搜索共用此 Token。已识别内置简体字幕或有效外挂时免下载。
             <a href="https://assrt.net/usercp.php" target="_blank" rel="noreferrer">
               获取 Token
             </a>
@@ -446,13 +434,6 @@ function SettingsPage() {
             </a>{' '}
             提供。
           </Paragraph>
-          <Form.Item
-            name="subtitle_download_hosts_text"
-            label="射手字幕下载主机"
-            extra="精确主机名，逗号分隔；仅允许 HTTPS。"
-          >
-            <Input />
-          </Form.Item>
         </Card>
         <div className="save-bar">
           <Text type="secondary">配置版本 {query.data?.revision ?? 0}</Text>

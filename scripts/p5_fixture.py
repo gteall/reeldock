@@ -1,4 +1,4 @@
-"""Container-only generated fixtures: persistent Mock DAV / TMDB / Shooter, real probe.
+"""Container-only generated fixtures: persistent Mock DAV / TMDB / ASSRT, real probe.
 
 Not an application mode or a deployment entry point. Mount explicitly for validation.
 """
@@ -18,7 +18,7 @@ from p3_support import DAV  # noqa: E402
 from p4_support import TVMetadata  # noqa: E402
 
 from reeldock.app import create_app  # noqa: E402
-from reeldock.domain import Artwork, Movie, Series, SubtitleCandidate  # noqa: E402
+from reeldock.domain import Artwork, Movie, Series  # noqa: E402
 from reeldock.runtime import Runtime  # noqa: E402
 from reeldock.server import serve  # noqa: E402
 
@@ -216,24 +216,16 @@ class Subtitles:
     async def __aexit__(self, *args):
         pass
 
-    async def search(self, fingerprint, episode_context=None):
+    async def automatic_candidates(self, keyword, episode_context=None):
         context = episode_context or {}
-        self.dav.calls["shooter:" + str(context.get("episode"))] += 1
-        self.dav.order.append("shooter")
+        self.dav.calls["assrt:" + str(context.get("episode"))] += 1
+        self.dav.order.append("assrt")
         self.dav.save()
         if context.get("episode") == 2 and not (ROOT / "repair-subtitles").exists():
-            return []
-        return [
-            SubtitleCandidate(
-                source="shooter",
-                external_id="generated",
-                format="srt",
-                description="generated test subtitle",
-                download_url="https://shooter.cn/generated.srt",
-            )
-        ]
+            return
+        yield {"candidate_id": "100001", "index": 0, "name": "generated.srt", "format": "srt"}
 
-    async def download(self, candidate):
+    async def download(self, identifier, file_index, file_name):
         self.dav.calls["subtitle_downloads"] += 1
         self.dav.save()
         return "1\n00:00:00,100 --> 00:00:01,900\n影坞原创测试对白\n\n".encode()
