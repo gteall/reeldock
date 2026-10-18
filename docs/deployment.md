@@ -50,6 +50,17 @@ docker compose ps
 
 通过 `http://NAS地址:8616` 使用界面时，任务标识由 HTTP 可用的 `crypto.getRandomValues()` 生成，不依赖要求安全上下文的 `crypto.randomUUID()`。若旧版本出现 `crypto.randomUUID is not a function`，更新修复源码后重新构建镜像并重建容器，随后强制刷新浏览器；仅重启旧容器不会更新前端资源。保留已有 `.env`、`data` 和 `cache`，无需重新初始化管理员。
 
+已有部署更新前先按[升级指南](upgrade.md)备份，再在原部署目录执行：
+
+```bash
+git pull --ff-only origin main
+docker compose build reeldock
+docker compose up -d --no-build --force-recreate --wait --wait-timeout 120 reeldock
+docker compose ps
+```
+
+`build` 只更新镜像标签，运行中的旧容器仍使用创建时的镜像；必须完成 `up` 重建步骤。2026-10-18 的 NAS 排障已实际遇到“源码和镜像已更新，容器仍使用旧镜像”，替换容器后静态脚本校验和实际扫描接口均通过。如账号没有 Docker 权限，以上 Docker 命令使用 `sudo`。浏览器随后强制刷新：macOS 为 `Command+Shift+R`，Windows/Linux 为 `Ctrl+Shift+R`。
+
 如果 Docker Hub 拉取失败，可使用相同官方基础镜像的公共 ECR 来源，不修改 Docker 全局配置：
 
 ```bash

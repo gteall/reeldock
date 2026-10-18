@@ -53,7 +53,15 @@ P5 部署与发布准备已实施：生产多阶段 Docker / Compose、非 root 
 - HTTP NAS 来源通常没有 `crypto.randomUUID()`，导致点击扫描时在浏览器生成幂等键即失败，请求尚未发送。扫描、启动刮削、资产重试、批量刮削及连接检查统一使用 `crypto.getRandomValues()` 生成 128 位随机幂等键，保留连接检查的重试键复用，不修改会话、CSRF 或后端幂等语义。
 - 在独立工作区修复，保留原工作区未提交的海报墙修改。新增回归覆盖无 randomUUID 的 HTTP 扫描请求、独立任务键及批量键格式、随机字节保留。
 - 与最新 main 的海报墙功能整合后，`pnpm test` 17 项通过，`pnpm format:check` 和 `pnpm build` 通过；Compose 按示例解析为宿主 8616 → 容器 8000，来源列表有效，`git diff --check` 通过。
-- 本机浏览器通过局域网 HTTP:8616 打开自建验证页，实际确认 `isSecureContext=false`、`crypto.randomUUID` 缺失、`crypto.getRandomValues` 可用；同一生产函数成功生成 1024 个互不重复、格式有效的任务键。仅验证浏览器兼容性，未访问真实 WebDAV 或读取用户媒体；用户 NAS 更新镜像后的实际扫描尚未验证。临时 HTTP 服务与页面已关闭，截图保存在本地忽略的 `reports/http-task-key.png`。
+- 本机浏览器通过局域网 HTTP:8616 打开自建验证页，实际确认 `isSecureContext=false`、`crypto.randomUUID` 缺失、`crypto.getRandomValues` 可用；同一生产函数成功生成 1024 个互不重复、格式有效的任务键。本条仅验证浏览器兼容性，未访问真实 WebDAV 或读取用户媒体；后续 NAS 实测见下节。临时 HTTP 服务与页面已关闭，截图保存在本地忽略的 `reports/http-task-key.png`。
+
+### 同日 NAS 部署复核
+
+- 用户授权连接现有 NAS 服务和指定部署目录排障。确认源码已在修复合并提交 `0684c02`，镜像标签也已包含修复，但运行容器仍引用旧镜像；HTTP 返回的旧入口脚本包含 `randomUUID`，不包含新的 `getRandomValues`。这是本次继续报错的直接原因。
+- 先通过应用备份命令保存数据库和密钥，并给旧镜像保留独立回退标签；复用已经构建、经隔离容器检查通过的新镜像，执行 `up --no-build --force-recreate --wait` 替换原服务。保留原配置、数据和缓存目录，宿主端口仍为 **8616**。
+- NAS 新容器健康检查通过，运行镜像与已验证镜像一致。实际 HTTP 返回 `index-BpzhEh_4.js`，SHA-256 为 `d7cf3161aad968463c153a04a002c25da782163be8aa7e539dce924e2bdc48d0`；确认不再调用 `randomUUID`，包含 `getRandomValues`。
+- 使用用户提供的现有管理员账号登录成功，配置保留；提交一次实际扫描返回 HTTP 202，持久化任务完成且无错误，返回 **2 个媒体包**。本次仅验证登录和扫描，没有启动媒体刮削或归档，不将其记为完整媒体链路验收。
+- 浏览器自动化连接超时，NAS 页面按钮交互未单独验证；上述 NAS 结果来自实际 HTTP/API、SSH 和 Docker 检查。脱敏报告、部署操作日志、备份位置及回退镜像标识仅保存在忽略的 `reports/`；密码通过无回显交互输入，未写入脚本、命令行或仓库。验证会话已退出。
 
 ## P0 实施记录：2026-10-08
 
