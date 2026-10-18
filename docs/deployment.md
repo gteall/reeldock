@@ -46,6 +46,18 @@ docker compose ps
 
 初始化交互式输入至少 8 位密码，无默认密码；已初始化的账号不能重复创建。应用已运行时也可初始化管理员，不在此操作中重复迁移。访问 `.env` 对应地址登录；`/api/health` 为本机健康检查，包含数据库连通性。
 
+### 修改或忘记管理员密码
+
+在原部署目录执行（账号没有 Docker 权限时加 `sudo`）：
+
+```bash
+docker compose exec reeldock reeldock reset-password
+```
+
+按提示输入两次新密码，至少 8 位，输入不回显。此命令重置已有管理员的密码，保留用户名、配置及刮削数据，并退出所有登录会话、清除登录失败次数。无需提供旧密码，只有能在 NAS 本机执行容器管理命令的用户才能操作。`init-admin` 仅用于首次创建账号，不能修改已有密码。
+
+若提示没有 `reset-password` 命令，先按下方更新步骤拉取源码、构建镜像并重建容器。服务已停止时可用 `docker compose run --rm --no-deps reeldock reset-password`。
+
 当前 NAS 部署使用 **8616** 作为宿主端口，后续部署和排障沿用此端口；容器内部仍为 8000。实际 NAS 地址只保存在本地配置中。
 
 通过 `http://NAS地址:8616` 使用界面时，任务标识由 HTTP 可用的 `crypto.getRandomValues()` 生成，不依赖要求安全上下文的 `crypto.randomUUID()`。若旧版本出现 `crypto.randomUUID is not a function`，更新修复源码后重新构建镜像并重建容器，随后强制刷新浏览器；仅重启旧容器不会更新前端资源。保留已有 `.env`、`data` 和 `cache`，无需重新初始化管理员。

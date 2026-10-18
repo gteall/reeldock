@@ -9,10 +9,10 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 from pwdlib import PasswordHash
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from reeldock.domain import AppConfig, ConfigUpdate
-from reeldock.models import Admin, Configuration, Event
+from reeldock.models import Admin, AuthSession, Configuration, Event, LoginLimit
 
 passwords = PasswordHash.recommended()
 
@@ -108,8 +108,22 @@ def init_admin(db, username: str, password: str):
     hashed = passwords.hash(password)
     with db.sessions.begin() as session:
         if session.scalar(select(Admin)):
-            raise ValueError("管理员已存在，不能重复初始化")
+            raise ValueError("管理员已存在，不能重复初始化；请使用 reset-password 重置密码")
         session.add(Admin(id=1, username=username.strip(), password_hash=hashed))
+
+
+def reset_admin_password(db, password: str):
+    if len(password) < 8:
+        raise ValueError("密码至少 8 位")
+    hashed = passwords.hash(password)
+    with db.sessions.begin() as session:
+        admin = session.get(Admin, 1)
+        if not admin:
+            raise ValueError("管理员尚未初始化，请先运行 init-admin")
+        admin.password_hash = hashed
+        session.execute(delete(AuthSession))
+        session.execute(update(LoginLimit).values(attempts=0))
+        session.add(Event(code="administrator_password_reset", details={}))
 
 
 class SafeFormatter(logging.Formatter):

@@ -204,6 +204,10 @@ def create_app(
         token = random_token()
         csrf = digest("csrf:" + token)
         with app.state.db.sessions.begin() as session:
+            current_admin = session.get(Admin, 1)
+            if not current_admin or current_admin.password_hash != hashed:
+                # A local reset may have completed while password verification was running.
+                raise HTTPException(401, "invalid_credentials")
             old = request.cookies.get(COOKIE)
             if old:
                 previous = session.get(AuthSession, digest(old))

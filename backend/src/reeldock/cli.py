@@ -12,7 +12,7 @@ from pathlib import Path
 from reeldock.backup import backup, restore
 from reeldock.database import Database
 from reeldock.runtime import Runtime
-from reeldock.security import init_admin
+from reeldock.security import init_admin, reset_admin_password
 from reeldock.state import StateError, head_revision, inspect_state, state_lock
 
 
@@ -22,6 +22,8 @@ def main():
     admin = commands.add_parser("init-admin")
     admin.add_argument("--username", default="admin")
     admin.add_argument("--password-stdin", action="store_true")
+    reset = commands.add_parser("reset-password", help="重置已有管理员密码并退出所有登录会话")
+    reset.add_argument("--password-stdin", action="store_true")
     commands.add_parser("migrate")
     commands.add_parser("serve")
     commands.add_parser("healthcheck")
@@ -52,7 +54,10 @@ def main():
             print(json.dumps(restore(args.input, runtime.data_dir)))
             return
         checked = inspect_state(runtime.database_path, runtime.data_dir / "master.key")
-        online_admin = args.command == "init-admin" and checked["schema"] == head_revision()
+        online_admin = (
+            args.command in {"init-admin", "reset-password"}
+            and checked["schema"] == head_revision()
+        )
         with nullcontext() if online_admin else state_lock(runtime.data_dir):
             inspect_state(runtime.database_path, runtime.data_dir / "master.key")
             db = Database(runtime.database_path)
@@ -67,12 +72,23 @@ def main():
                     )
                     init_admin(db, args.username, password)
                     print("管理员已初始化。")
+                elif args.command == "reset-password":
+                    if args.password_stdin:
+                        password = sys.stdin.readline().rstrip("\r\n")
+                    else:
+                        password = getpass.getpass("新管理员密码（至少8位）: ")
+                        if password != getpass.getpass("再次输入新密码: "):
+                            raise ValueError("两次输入的密码不一致，密码未修改")
+                    reset_admin_password(db, password)
+                    print("管理员密码已重置，所有登录会话已退出，请使用新密码登录。")
                 else:
                     print("数据库迁移完成。")
             finally:
                 db.close()
     except (StateError, ValueError) as error:
         parser.exit(1, str(error) + "\n")
+    except (EOFError, KeyboardInterrupt):
+        parser.exit(1, "已取消，密码未修改。\n")
     except (OSError, sqlite3.Error, urllib.error.URLError):
         parser.exit(1, "state_operation_failed\n")
 
