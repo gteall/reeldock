@@ -6,9 +6,25 @@ import type { Asset, Film, MediaItem } from './api'
 export function ProbeEvidence({
   item,
 }: {
-  item: Pick<MediaItem, 'probe_status' | 'probe_evidence' | 'subtitle_status' | 'subtitle_reason'>
+  item: Pick<
+    MediaItem,
+    'probe_status' | 'probe_evidence' | 'subtitle_status' | 'subtitle_reason' | 'subtitle_evidence'
+  >
 }) {
   const audio = item.probe_evidence.audio
+  const embedded = item.subtitle_evidence.embedded
+  const metadataBased =
+    embedded &&
+    typeof embedded === 'object' &&
+    'verification' in embedded &&
+    embedded.verification === 'stream_metadata'
+  const subtitleReason = item.subtitle_reason
+    ? explain(item.subtitle_reason)
+    : item.subtitle_status === 'embedded_zh_hans'
+      ? metadataBased
+        ? '内置简体图形字幕（依据轨道标记，免下载）'
+        : '内置简体文本字幕已校验，免下载'
+      : explain(item.subtitle_reason)
   return (
     <>
       <Descriptions
@@ -25,7 +41,7 @@ export function ProbeEvidence({
                   ? `${audio.language}（${audio.selection === 'explicit_default' ? '默认标记' : '首音轨推断'}）`
                   : '已探测 · 待确认',
           },
-          { key: 'reason', label: '字幕依据', children: explain(item.subtitle_reason) },
+          { key: 'reason', label: '字幕依据', children: subtitleReason },
           {
             key: 'duration',
             label: '实际片长',

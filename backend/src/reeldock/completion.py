@@ -13,6 +13,7 @@ from reeldock.probe import MediaProbe, validate_vobsub_pair
 from reeldock.providers.shooter import ShooterProvider
 from reeldock.queue import SUBTITLE_PASSED, emit, gate
 from reeldock.subtitles import (
+    BITMAP_SUBTITLE_CODECS,
     MAX_SUBTITLE,
     default_audio,
     fingerprint,
@@ -434,23 +435,35 @@ class CompletionPipeline:
                     "external_verified",
                     evidence={"audio": audio, "external": evidence, "path": entry["path"]},
                 )
-            for stream in data["streams"]:
+            for stream in sorted(data["streams"], key=lambda item: not item.get("default")):
                 if stream["type"] != "subtitle" or not simplified_track(stream):
                     continue
-                if stream["codec"] not in {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}:
-                    continue  # No OCR / guesses about bitmap subtitles.
-                try:
-                    content = await probe.extract(stream["index"])
-                    _, evidence = validate_subtitle(content, "srt", data["duration"], full=True)
-                except ProviderError as error:
-                    if error.code in {
-                        "embedded_subtitle_incomplete",
-                        "embedded_subtitle_not_simplified",
-                        "subtitle_no_dialogue",
-                        "subtitle_invalid_timing",
-                    }:
-                        continue
-                    raise
+                if stream["codec"] in BITMAP_SUBTITLE_CODECS:
+                    # Bitmap streams cannot be extracted as text without OCR. Trust
+                    # explicit Hans labels on non-forced dialogue tracks and record
+                    # the source of this decision instead of claiming text validation.
+                    evidence = {
+                        "verification": "stream_metadata",
+                        "codec": stream["codec"],
+                        "language": stream.get("language"),
+                        "title": stream.get("title"),
+                    }
+                elif stream["codec"] in {"subrip", "ass", "ssa", "mov_text", "webvtt", "text"}:
+                    try:
+                        content = await probe.extract(stream["index"])
+                        _, evidence = validate_subtitle(content, "srt", data["duration"], full=True)
+                    except ProviderError as error:
+                        if error.code in {
+                            "embedded_subtitle_incomplete",
+                            "embedded_subtitle_not_simplified",
+                            "subtitle_no_dialogue",
+                            "subtitle_invalid_timing",
+                        }:
+                            continue
+                        raise
+                    evidence["verification"] = "parsed_text"
+                else:
+                    continue
                 await self.verify_media(claim, storage, media)
                 return self.media_result(
                     media.id,

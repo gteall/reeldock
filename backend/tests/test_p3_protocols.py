@@ -7,7 +7,7 @@ import pytest
 
 from reeldock.domain import AppConfig, ProviderError
 from reeldock.providers.shooter import ShooterProvider
-from reeldock.subtitles import fingerprint, matches_external, validate_subtitle
+from reeldock.subtitles import fingerprint, matches_external, simplified_track, validate_subtitle
 
 
 def config(**changes):
@@ -111,6 +111,40 @@ def test_hans_label_does_not_accept_english_or_traditional_content():
         data = f"1\n00:00:00,100 --> 00:01:30,000\n{text}\n".encode()
         with pytest.raises(ProviderError, match="embedded_subtitle_not_simplified"):
             validate_subtitle(data, "srt", 100, full=True)
+
+
+@pytest.mark.parametrize(
+    "tag,title,flags,expected",
+    [
+        ("chi", "国配简体中字特效", {}, True),
+        ("chi", "简英双语特效", {}, True),
+        ("chi", "簡英雙語特效", {}, True),
+        ("zho", "简中", {}, True),
+        ("zh-Hans", "", {}, True),
+        ("chi", "繁英双语特效", {}, False),
+        ("chi", "繁体中字", {}, False),
+        ("chi", "Chinese", {}, False),
+        ("chi", "简英双语", {"forced": 1}, False),
+        ("chi", "简英双语", {"comment": 1}, False),
+        ("chi", "简体 Commentary", {}, False),
+        ("chi", "简体 Forced", {}, False),
+        ("chi", "简体 Signs & Songs", {}, False),
+        ("chi", "简体仅标牌", {}, False),
+        ("chi", "简体无对白", {}, False),
+    ],
+)
+def test_simplified_subtitle_labels_exclude_partial_and_unconfirmed_tracks(
+    tag, title, flags, expected
+):
+    assert simplified_track({"language": tag, "title": title, **flags}) is expected
+
+
+@pytest.mark.parametrize(
+    "tag,title", [("eng", "简英双语"), ("zh-Hant", "简英双语"), ("chi", "简英 繁英")]
+)
+def test_conflicting_bilingual_labels_need_review(tag, title):
+    with pytest.raises(ProviderError, match="embedded_subtitle_ambiguous"):
+        simplified_track({"language": tag, "title": title})
 
 
 async def test_vobsub_pair_structure_and_demux(monkeypatch):

@@ -114,13 +114,95 @@ async def test_embedded_subtitle_matrix(foundation, tmp_path, variant):
     if variant == "incomplete":
         env[5].text = SRT.replace(b"00:01:30,000", b"00:00:01,000")
     task, package = await run(env)
-    if variant == "hans":
+    if variant in {"hans", "bitmap"}:
         assert task.status == "completed" and package.subtitle_status == "embedded_zh_hans"
-        assert env[5].calls["extract"] == 1 and not env[6].calls
+        assert env[5].calls["extract"] == (1 if variant == "hans" else 0) and not env[6].calls
     elif variant == "conflict":
         assert package.subtitle_status == "needs_review" and env[3].calls["move"] == 0
     else:
         assert task.status == "completed" and package.subtitle_status == "downloaded_verified"
+
+
+@pytest.mark.parametrize("codec", ["hdmv_pgs_subtitle", "dvd_subtitle"])
+@pytest.mark.parametrize(
+    "tag,title", [("chi", "国配简体中字特效"), ("chi", "简英双语特效"), ("zh-Hans", "")]
+)
+async def test_labeled_bitmap_subtitles_skip_extraction_and_download(
+    foundation, tmp_path, codec, tag, title
+):
+    env = await setup(foundation, tmp_path)
+    dav, probe, shooter = env[3], env[5], env[6]
+    shooter.empty = True
+    probe.data["streams"].append(
+        {"index": 2, "type": "subtitle", "codec": codec, "language": tag, "title": title}
+    )
+    task, package = await run(env)
+    assert task.status == "completed", task.error_code
+    assert package.subtitle_status == "embedded_zh_hans"
+    assert package.subtitle_evidence["stream_index"] == 2
+    assert package.subtitle_evidence["embedded"] == {
+        "verification": "stream_metadata",
+        "codec": codec,
+        "language": tag,
+        "title": title,
+    }
+    assert probe.calls == {"probe": 1} and not shooter.calls
+    assert dav.calls["media_reads"] == 0
+    assert not any(".shooter." in path for path in dav.files)
+
+
+async def test_failed_pgs_download_retries_using_saved_stream_labels(
+    foundation, tmp_path, monkeypatch
+):
+    env = await setup(foundation, tmp_path)
+    db, _, queue, dav, metadata, probe, shooter, worker, _ = env
+    probe.data["duration"] = 9010.006
+    probe.data["streams"] = [
+        {"index": 0, "type": "video", "codec": "hevc", "default": 1},
+        {"index": 1, "type": "audio", "codec": "dts", "language": "eng", "default": 1},
+        {"index": 2, "type": "audio", "codec": "dts", "language": "chi", "title": "国语次世代"},
+        *[
+            {
+                "index": index,
+                "type": "subtitle",
+                "codec": "hdmv_pgs_subtitle",
+                "language": "chi",
+                "title": title,
+                "default": int(index == 5),
+                "forced": 0,
+            }
+            for index, title in [
+                (3, "国配简体中字特效"),
+                (4, "国配繁体中字特效"),
+                (5, "简英双语特效"),
+                (6, "繁英双语特效"),
+            ]
+        ],
+        {"index": 7, "type": "video", "codec": "mjpeg"},
+    ]
+    shooter.empty = True
+    with monkeypatch.context() as previous_policy:
+        previous_policy.setattr("reeldock.completion.BITMAP_SUBTITLE_CODECS", set())
+        task, package = await run(env)
+    assert task.status == "blocked" and task.error_code == "subtitle_no_match"
+    previous_metadata_calls, previous_shooter_calls = metadata.calls.copy(), shooter.calls.copy()
+    media_reads = dav.calls["media_reads"]
+    queue.control(task.id, "retry")
+    await worker.execute(queue.claim("fixed-pgs-policy"))
+    from reeldock.models import Media, Package
+
+    with db.sessions.begin() as session:
+        assert session.get(Task, task.id).status == "completed"
+        package = session.get(Package, package.id)
+        media = session.scalar(select(Media).where(Media.package_id == package.id))
+        assert package.subtitle_status == media.subtitle_status == "embedded_zh_hans"
+        assert media.subtitle_evidence["stream_index"] == 5
+        assert media.subtitle_evidence["embedded"]["verification"] == "stream_metadata"
+    assert probe.calls == {"probe": 1}
+    assert shooter.calls == previous_shooter_calls and metadata.calls == previous_metadata_calls
+    assert dav.calls["media_reads"] == media_reads
+    manifest = json.loads(next(body for path, body in dav.files.items() if path.endswith(".json")))
+    assert manifest["subtitle_evidence"]["stream_index"] == 5
 
 
 @pytest.mark.parametrize("variant", ["english", "unrelated", "html", "empty", "timeline"])

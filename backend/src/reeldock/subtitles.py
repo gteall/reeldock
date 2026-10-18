@@ -15,6 +15,12 @@ from reeldock.domain import ProviderError
 MAX_SUBTITLE = 2 * 1024 * 1024
 CHINESE = {"zh", "zho", "chi", "cmn", "yue", "cn", "chs", "cht"}
 COMMENTARY = re.compile(r"commentary|description|解说|解說|评论|評論", re.I)
+PARTIAL_SUBTITLE = re.compile(
+    r"\bsigns\b|\b(?:songs|lyrics)\s*only\b|无对白|無對白|"
+    r"(?:仅|僅)(?:特效|标牌|標牌|歌词|歌詞)",
+    re.I,
+)
+BITMAP_SUBTITLE_CODECS = {"hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub"}
 TO_SIMPLIFIED = OpenCC("t2s")
 
 
@@ -75,14 +81,15 @@ def simplified_track(stream):
         stream.get("forced")
         or stream.get("comment")
         or COMMENTARY.search(title)
+        or PARTIAL_SUBTITLE.search(title)
         or re.search(r"forced|强制|強制", title, re.I)
     ):
         return False
     hans = tag in {"zh-hans", "chs"} or bool(
-        re.search(r"简体|簡體|simplified|\bchs\b", title, re.I)
+        re.search(r"简体|簡體|简中|簡中|中简|中簡|简英|簡英|simplified|\bchs\b", title, re.I)
     )
     hant = tag in {"zh-hant", "cht"} or bool(
-        re.search(r"繁体|繁體|traditional|\bcht\b", title, re.I)
+        re.search(r"繁体|繁體|繁中|中繁|繁英|traditional|\bcht\b", title, re.I)
     )
     if hans and (hant or (language(tag) not in {None, "zh"})):
         raise ProviderError("embedded_subtitle_ambiguous")

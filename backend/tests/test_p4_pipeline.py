@@ -82,6 +82,35 @@ async def test_series_ambiguous_candidates_follow_confidence_threshold(
     assert not probe.calls and not shooter.calls and dav.calls["move"] == 0
 
 
+async def test_series_embedded_simplified_pgs_skips_subtitle_downloads(foundation, tmp_path):
+    env = await setup_tv(foundation, tmp_path, "en")
+    db, _, _, dav, _, probe, shooter, _, _ = env
+    probe.data["streams"].append(
+        {
+            "index": 2,
+            "type": "subtitle",
+            "codec": "hdmv_pgs_subtitle",
+            "language": "chi",
+            "title": "简英双语特效",
+            "default": 1,
+        }
+    )
+    shooter.empty = True
+    task, package = await run_tv(env)
+    assert task.status == "completed", task.error_code
+    assert package.subtitle_status == "all_media_verified"
+    with db.sessions.begin() as session:
+        media = list(session.scalars(select(Media).where(Media.package_id == package.id)))
+        assert len(media) == 2
+        assert all(item.subtitle_status == "embedded_zh_hans" for item in media)
+        assert all(
+            item.subtitle_evidence["embedded"]["verification"] == "stream_metadata"
+            for item in media
+        )
+    assert probe.calls["extract"] == 0 and not shooter.calls
+    assert dav.calls["media_reads"] == 0
+
+
 @pytest.mark.parametrize("language", ["zh", "cn"])
 async def test_chinese_series_entire_package_zero_probe(foundation, tmp_path, language):
     env = await setup_tv(foundation, tmp_path, language)

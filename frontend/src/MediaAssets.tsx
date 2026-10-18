@@ -29,7 +29,7 @@ const names: Record<string, string> = {
   not_started: '未开始',
   skipped_tmdb_chinese: '依据 TMDB 中文规则跳过',
   default_audio_chinese: '默认中文音轨 · 免下载',
-  embedded_zh_hans: '完整内置简体 · 免下载',
+  embedded_zh_hans: '内置简体 · 免下载',
   external_verified: '已有外挂已验证',
   downloaded_verified: '补充外挂已上传验证',
   archived: '历史已归档',
