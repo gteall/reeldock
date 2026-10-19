@@ -60,6 +60,7 @@ def clear_records(session, package, config_revision):
     session.execute(delete(Asset).where(Asset.package_id == package.id))
     record = session.get(MovieRecord, package.id)
     record.details, record.cast, record.artwork, record.candidates = {}, [], [], []
+    record.search_query, record.match_evidence = None, {}
     record.match_status, record.manual_id, record.error_code = "pending", None, None
     for item in session.scalars(select(Media).where(Media.package_id == package.id)):
         item.details, item.artwork = {}, []

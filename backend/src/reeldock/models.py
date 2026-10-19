@@ -131,6 +131,8 @@ class MovieRecord(Base):
     scan_status: Mapped[str] = mapped_column(String(40), default="needs_scan")
     match_status: Mapped[str] = mapped_column(String(40), default="pending")
     manual_id: Mapped[str | None] = mapped_column(String(32))
+    search_query: Mapped[str | None] = mapped_column(Text)
+    match_evidence: Mapped[dict] = mapped_column(JSON, default=dict)
     candidates: Mapped[list] = mapped_column(JSON, default=list)
     details: Mapped[dict] = mapped_column(JSON, default=dict)
     cast: Mapped[list] = mapped_column(JSON, default=list)

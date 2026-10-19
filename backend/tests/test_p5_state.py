@@ -64,7 +64,7 @@ def test_online_backup_includes_wal_and_matching_key(foundation, tmp_path, confi
         report = backup(tmp_path, tmp_path / "snapshot.tar.gz")
     target = tmp_path / "restored"
     assert restore(tmp_path / "snapshot.tar.gz", target)["status"] == "passed"
-    assert report["schema"] == "0004"
+    assert report["schema"] == "0005"
     assert (target / "master.key").read_bytes() == original_key
     assert (tmp_path / "snapshot.tar.gz").stat().st_mode & 0o777 == 0o600
     assert (target / "master.key").stat().st_mode & 0o777 == 0o600
@@ -192,7 +192,7 @@ def test_upgrade_and_restore_original_schema_on_failed_upgrade(foundation, tmp_p
     snapshot = tmp_path / "before-upgrade.tar.gz"
     backup(tmp_path, snapshot)
     db.migrate()
-    assert inspect_state(tmp_path / "reeldock.sqlite3", tmp_path / "master.key")["schema"] == "0004"
+    assert inspect_state(tmp_path / "reeldock.sqlite3", tmp_path / "master.key")["schema"] == "0005"
     with db.engine.begin() as connection:
         connection.execute(text("UPDATE alembic_version SET version_num='broken-upgrade'"))
     target = tmp_path / "rollback"

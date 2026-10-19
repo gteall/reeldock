@@ -64,7 +64,10 @@ const messages: Record<string, string> = {
   tmdb_timeout: 'TMDB 连接超时，请检查网络或代理',
   tmdb_not_found: 'TMDB ID 不存在，请核对电影与剧集类型',
   movie_not_found: '影片不存在或已被移除',
-  tmdb_match_needs_review: '匹配存在歧义，请选择候选或指定电影 / 剧 ID',
+  tmdb_match_needs_review: '候选匹配置信度不足，请选择候选、修改搜索词或指定 TMDB ID',
+  tmdb_search_no_results: 'TMDB 没有搜索结果，请修改搜索词或指定 TMDB ID',
+  metadata_search_query_invalid: '请填写有效的影片名称',
+  metadata_search_changed: '搜索词已更新，请启动原地刮削重新匹配',
   tmdb_id_conflict: '文件名、现存 NFO 与指定 ID 冲突，已保留原件',
   existing_nfo_id_missing: '已有 NFO 缺少明确 TMDB ID，已保留原件，请人工核对',
   invalid_nfo: '已有 NFO 无法安全解析，已保留原件',
@@ -300,6 +303,19 @@ export interface Film {
   task_id: string | null
   task_status: string | null
   candidates: { id: string; title: string; year: number | null; confidence: number }[]
+  search_query?: string | null
+  match_evidence?: {
+    parsed_title?: string
+    year?: number | null
+    season?: number | null
+    outcome?: string
+    queries?: {
+      query: string
+      source: string
+      result_count?: number
+      error_code?: string
+    }[]
+  }
   assets: Asset[]
   cast: {
     id: string

@@ -423,6 +423,10 @@ def create_app(
             "match_status": row.match_status,
             "tmdb_id": package.tmdb_id,
             "manual_id": row.manual_id,
+            "search_query": row.search_query,
+            "match_evidence": row.match_evidence
+            if row.match_evidence.get("context_version") == package.context_version
+            else {},
             "original_language": package.original_language,
             "candidates": row.candidates,
             "metadata": {
@@ -454,9 +458,18 @@ def create_app(
             if intent
             else None,
             "archive_enabled": False,
-            "error_code": row.error_code or (latest.error_code if latest else None),
-            "task_id": latest.id if latest else None,
-            "task_status": latest.status if latest else None,
+            "error_code": row.error_code
+            or (
+                latest.error_code
+                if latest and latest.context_version == package.context_version
+                else None
+            ),
+            "task_id": latest.id
+            if latest and latest.context_version == package.context_version
+            else None,
+            "task_status": latest.status
+            if latest and latest.context_version == package.context_version
+            else None,
             "cast": [
                 {
                     "id": p["external_id"],
@@ -530,7 +543,37 @@ def create_app(
                 package.base_required = []
                 row.details, row.cast, row.artwork = {}, [], []
             row.manual_id, row.match_status, row.error_code = body.tmdb_id, "pending", None
+            row.candidates, row.match_evidence = [], {}
             session.add(Event(code="manual_tmdb_id_selected", details={"package_id": package_id}))
+        return {"accepted": True}
+
+    class MetadataSearchQuery(BaseModel):
+        query: str | None = Field(default=None, max_length=200)
+        expected_context_version: int = Field(ge=1)
+
+    @app.put("/api/packages/{package_id}/search-query", dependencies=[Depends(mutation)])
+    def save_search_query(package_id: str, body: MetadataSearchQuery):
+        query = " ".join((body.query or "").split()) or None
+        if query and not any(char.isalnum() for char in query):
+            raise HTTPException(422, "metadata_search_query_invalid")
+        with app.state.db.sessions.begin() as session:
+            package, row = session.get(Package, package_id), session.get(MovieRecord, package_id)
+            if not package or not row:
+                raise HTTPException(404, "movie_not_found")
+            if body.expected_context_version != package.context_version:
+                raise HTTPException(409, "context_changed_submit_new_task")
+            if package.lease_owner and (package.lease_until or 0) > time.time():
+                raise HTTPException(409, "package_busy_pause_first")
+            if row.scan_status in {"missing", "superseded"}:
+                raise HTTPException(409, "package_not_ready")
+            invalidate_package(package, "metadata_search_changed")
+            package.tmdb_id, package.original_language, package.base_required = None, None, []
+            row.search_query, row.match_evidence, row.candidates = query, {}, []
+            row.manual_id, row.match_status, row.error_code = None, "pending", None
+            row.details, row.cast, row.artwork = {}, [], []
+            session.add(
+                Event(code="metadata_search_query_saved", details={"package_id": package_id})
+            )
         return {"accepted": True}
 
     class EpisodeMapping(BaseModel):

@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from reeldock.domain import Episode, ProviderError, Series
 from reeldock.exporter import MAX_NFO_BYTES, nfo_ids
-from reeldock.matching import ParsedName, automatic_candidate, explicit_ids, rank_candidates
+from reeldock.matching import automatic_candidate, explicit_ids
 from reeldock.models import Media, MovieRecord, Package, SeasonRecord
 from reeldock.queue import revise_package
 
@@ -54,21 +54,14 @@ async def match_series(pipeline, claim):
             chosen = next(iter(filename_ids), None) or record.manual_id or next(iter(ids), None)
             candidates = record.candidates
             if chosen is None:
-                candidates = rank_candidates(
-                    ParsedName(record.title, record.year, None),
-                    await metadata.search(record.title, "tv", record.year),
+                chosen, candidates = await pipeline.search_metadata(
+                    claim,
+                    metadata,
+                    package,
+                    record,
+                    [item.remote_path for item in media],
+                    choose=automatic_candidate,
                 )
-                chosen = automatic_candidate(candidates)
-                if not chosen:
-                    with pipeline.db.sessions.begin() as session:
-                        pipeline.queue._owned(session, claim)
-                        row = session.get(MovieRecord, package.id)
-                        row.candidates, row.match_status, row.error_code = (
-                            candidates,
-                            "needs_review",
-                            "tmdb_match_needs_review",
-                        )
-                    raise ProviderError("tmdb_match_needs_review")
             series = await metadata.series_details(chosen)
             if series.external_id != chosen:
                 raise ProviderError("tmdb_id_conflict")

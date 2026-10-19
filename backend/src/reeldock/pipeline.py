@@ -3,6 +3,7 @@
 import re
 import time
 from collections import Counter
+from copy import deepcopy
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
@@ -19,7 +20,13 @@ from reeldock.exporter import (
     read_nfo,
     validate_image,
 )
-from reeldock.matching import automatic_candidate, explicit_ids, parse_name, rank_candidates
+from reeldock.matching import (
+    automatic_candidate,
+    explicit_ids,
+    parse_name,
+    search_candidates,
+    search_queries,
+)
 from reeldock.models import Asset, Media, MovieRecord, Package, TaskStep
 from reeldock.providers.tmdb import TMDBProvider
 from reeldock.providers.webdav import WebDAVProvider
@@ -135,6 +142,45 @@ class MoviePipeline:
         self.check(claim)
         return entries
 
+    async def search_metadata(self, claim, metadata, package, record, media_paths, *, choose):
+        config = self.configuration(claim)
+        queries = search_queries(
+            package.remote_path,
+            media_paths,
+            package.kind,
+            root=config.root_for(package.remote_path),
+            override=record.search_query,
+        )
+
+        def report(evidence, candidates):
+            with self.db.sessions.begin() as session:
+                task, current = self.queue._owned(session, claim)
+                self.queue._current(session, task, current)
+                row = session.get(MovieRecord, package.id)
+                row.match_evidence = {
+                    **deepcopy(evidence),
+                    "context_version": claim.context_version,
+                }
+                row.candidates, row.error_code = deepcopy(candidates), None
+
+        selected, candidates = await search_candidates(
+            metadata,
+            queries,
+            package.kind,
+            choose=choose,
+            report=report,
+            check=lambda: self.check(claim),
+        )
+        if selected is None:
+            error = "tmdb_match_needs_review" if candidates else "tmdb_search_no_results"
+            with self.db.sessions.begin() as session:
+                task, current = self.queue._owned(session, claim)
+                self.queue._current(session, task, current)
+                row = session.get(MovieRecord, package.id)
+                row.match_status, row.error_code = "needs_review", error
+            raise ProviderError(error)
+        return selected, candidates
+
     async def match(self, claim):
         package, _ = self.record(claim)
         if package.kind == "tv":
@@ -215,16 +261,14 @@ class MoviePipeline:
             ):
                 return {"tmdb_id": package.tmdb_id, "reused": True}
             if chosen is None:
-                movies = await metadata.search(parsed.title, "movie", parsed.year)
-                candidates = rank_candidates(parsed, movies)
-                chosen = automatic_candidate(candidates)
-                if not chosen:
-                    with self.db.sessions.begin() as session:
-                        self.queue._owned(session, claim)
-                        row = session.get(MovieRecord, claim.package_id)
-                        row.candidates, row.match_status = candidates, "needs_review"
-                        row.error_code = "tmdb_match_needs_review"
-                    raise ProviderError("tmdb_match_needs_review")
+                chosen, candidates = await self.search_metadata(
+                    claim,
+                    metadata,
+                    package,
+                    record,
+                    [record.media_path],
+                    choose=automatic_candidate,
+                )
             movie = await metadata.movie_details(chosen)
             if movie.external_id != chosen:
                 raise ProviderError("tmdb_id_conflict")

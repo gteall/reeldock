@@ -8,10 +8,8 @@ import {
   Descriptions,
   Drawer,
   Empty,
-  Form,
   Image,
   Input,
-  InputNumber,
   Space,
   Select,
   Segmented,
@@ -29,6 +27,7 @@ import { Preview, Status } from './MediaAssets'
 import { SubtitleSearch } from './SubtitleSearch'
 import { DeleteMetadataButton } from './DeleteMetadataButton'
 import { PageSizeControl, usePageSize } from './LibraryPageSize'
+import { MetadataMatch } from './MetadataMatch'
 
 function assetState(film: Film, kind: string) {
   if (kind === 'actor' && !film.actor_images_enabled)
@@ -116,15 +115,6 @@ export function MoviesPage() {
     mutationFn: ({ id, action }: { id: string; action: string }) =>
       api(`/tasks/${id}/${action}`, { method: 'POST' }),
     onSuccess: refresh,
-    onError: error,
-  })
-  const match = useMutation({
-    mutationFn: ({ id, tmdbId }: { id: string; tmdbId: string }) =>
-      api(`/movies/${id}/match`, { method: 'PUT', body: JSON.stringify({ tmdb_id: tmdbId }) }),
-    onSuccess: () => {
-      refresh()
-      message.success('选择已保存，请启动原地刮削；现存 NFO 冲突仍会受保护')
-    },
     onError: error,
   })
   const busy = (f: Film) =>
@@ -494,6 +484,7 @@ export function MoviesPage() {
                 </Button>
               )}
             </Space>
+            <MetadataMatch key={film.id} film={film} busy={busy(film)} refresh={refresh} />
             {film.kind === 'tv' && (
               <Card title="季与集">
                 <EpisodesPanel
@@ -520,54 +511,6 @@ export function MoviesPage() {
               </Card>
             )}
             <SubtitleSearch key={film.id} film={film} busy={busy(film)} refresh={refresh} />
-            <Card title="匹配与人工指定">
-              <Form
-                layout="inline"
-                onFinish={(values: { tmdbId: number }) =>
-                  match.mutate({ id: film.id, tmdbId: String(values.tmdbId) })
-                }
-              >
-                <Form.Item name="tmdbId" rules={[{ required: true }]}>
-                  <InputNumber
-                    min={1}
-                    precision={0}
-                    placeholder={film.kind === 'tv' ? '剧 TMDB ID' : '电影 TMDB ID'}
-                    style={{ width: 200 }}
-                  />
-                </Form.Item>
-                <Button htmlType="submit" loading={match.isPending} disabled={busy(film)}>
-                  保存 ID
-                </Button>
-              </Form>
-              <Table
-                size="small"
-                rowKey="id"
-                pagination={false}
-                dataSource={film.candidates}
-                style={{ marginTop: 16 }}
-                columns={[
-                  { title: '候选', dataIndex: 'title' },
-                  { title: '年份', dataIndex: 'year' },
-                  {
-                    title: '置信度',
-                    dataIndex: 'confidence',
-                    render: (value: number) => `${Math.round(value * 100)}%`,
-                  },
-                  {
-                    title: '选择',
-                    render: (_, c) => (
-                      <Button
-                        size="small"
-                        disabled={busy(film)}
-                        onClick={() => match.mutate({ id: film.id, tmdbId: c.id })}
-                      >
-                        #{c.id}
-                      </Button>
-                    ),
-                  },
-                ]}
-              />
-            </Card>
             <Card title="资产与最终清单 · 上传后完整读回验证">
               <Table<Asset>
                 size="small"

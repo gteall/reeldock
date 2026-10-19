@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, setCsrf } from './api'
+import { api, explain, setCsrf } from './api'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -7,6 +7,10 @@ afterEach(() => {
 })
 
 describe('authenticated API transport', () => {
+  it('distinguishes an empty metadata search from low-confidence candidates', () => {
+    expect(explain('tmdb_search_no_results')).toContain('没有搜索结果')
+    expect(explain('tmdb_match_needs_review')).toContain('置信度不足')
+  })
   it('sends the session cookie and CSRF token for configuration mutations', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ revision: 2 })))
     vi.stubGlobal('fetch', fetchMock)

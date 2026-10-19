@@ -152,7 +152,8 @@ class Scanner:
                     name = parse_name(
                         PurePosixPath(path).name
                         if kind == "tv"
-                        else PurePosixPath(videos[0].path).name
+                        else PurePosixPath(videos[0].path).name,
+                        kind=kind,
                     )
                 except ProviderError as error:
                     name, name_error = None, error.code
@@ -169,6 +170,7 @@ class Scanner:
                     revise_package(session, package, source_snapshot=snapshot)
                     record.match_status = "pending"
                     record.details, record.cast, record.artwork, record.candidates = {}, [], [], []
+                    record.match_evidence = {}
                     if name:
                         record.title, record.year = name.title, name.year
                 record.last_seen = now

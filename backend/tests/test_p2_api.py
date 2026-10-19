@@ -151,5 +151,5 @@ def test_upgrade_existing_p1_configuration_and_tasks(tmp_path, config_body):
     assert "stable_seconds" not in config.model_dump()
     with db.sessions.begin() as session:
         assert session.get(Task, task_id).status == "queued"
-        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004"
+        assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005"
     db.close()
