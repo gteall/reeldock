@@ -23,8 +23,21 @@ async def match_series(pipeline, claim):
         pipeline.metadata_factory(config, pipeline.cache) as metadata,
     ):
         entries = await pipeline.source(claim, storage, config)
+        with pipeline.db.sessions.begin() as session:
+            media = list(
+                session.scalars(
+                    select(Media)
+                    .where(Media.package_id == package.id)
+                    .order_by(Media.season, Media.episode)
+                )
+            )
         if record.match_status != "matched" or not record.details:
-            ids = explicit_ids(package.remote_path)
+            filename_ids = {
+                identifier
+                for item in media
+                for identifier in explicit_ids(PurePosixPath(item.remote_path).name)
+            }
+            ids = filename_ids.copy() if filename_ids else explicit_ids(package.remote_path)
             root_nfo = package.remote_path + "/tvshow.nfo"
             for entry in entries:
                 if entry.path.casefold() == root_nfo.casefold() and not entry.is_dir:
@@ -34,9 +47,12 @@ async def match_series(pipeline, claim):
                     if not identifiers:
                         raise ProviderError("existing_nfo_id_missing")
                     ids |= identifiers
-            if len(ids) > 1 or (record.manual_id and ids and record.manual_id not in ids):
+            if len(ids) > 1 or (
+                not filename_ids and record.manual_id and ids and record.manual_id not in ids
+            ):
                 raise ProviderError("tmdb_id_conflict")
-            chosen, candidates = record.manual_id or next(iter(ids), None), record.candidates
+            chosen = next(iter(filename_ids), None) or record.manual_id or next(iter(ids), None)
+            candidates = record.candidates
             if chosen is None:
                 candidates = rank_candidates(
                     ParsedName(record.title, record.year, None),
@@ -92,14 +108,6 @@ async def match_series(pipeline, claim):
                 raise ProviderError("metadata_changed_submit_new_task")
         else:
             series = Series.model_validate(record.details)
-        with pipeline.db.sessions.begin() as session:
-            media = list(
-                session.scalars(
-                    select(Media)
-                    .where(Media.package_id == package.id)
-                    .order_by(Media.season, Media.episode)
-                )
-            )
         failures = []
         for season in sorted({m.season for m in media}):
             pipeline.check(claim)

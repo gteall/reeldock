@@ -82,6 +82,53 @@ async def test_series_ambiguous_candidates_follow_confidence_threshold(
     assert not probe.calls and not shooter.calls and dav.calls["move"] == 0
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "{tmdb-27205}",
+        "{tmdbid-27205}",
+        "{tmdb=27205}",
+        "{tmdbid=27205}",
+        "[tmdb-27205]",
+        "[tmdbid-27205]",
+        "[tmdb=27205]",
+        "[tmdbid=27205]",
+    ],
+)
+async def test_series_filename_tmdb_id_skips_title_search_and_overrides_manual_choice(
+    foundation, tmp_path, marker
+):
+    env = await setup_tv(
+        foundation,
+        tmp_path,
+        files=[f"Season 01/无关片名{marker}.S01E01.mp4", "Season 01/另一片名.S01E02.mkv"],
+    )
+    db, _, _, dav, metadata, _, _, _, _ = env
+    metadata.series.external_id = "27205"
+    with db.sessions.begin() as session:
+        session.scalar(select(MovieRecord)).manual_id = "456"
+    task, package = await run_tv(env)
+    assert task.status == "completed", task.error_code
+    assert package.tmdb_id == "27205"
+    assert metadata.calls["search:tv"] == 0 and metadata.calls["series"] == 1
+    assert read_nfo(dav.files[ROOT + "/tvshow.nfo"], "tvshow").findtext("tmdbid") == "27205"
+
+
+async def test_conflicting_series_filename_tmdb_ids_require_review(foundation, tmp_path):
+    env = await setup_tv(
+        foundation,
+        tmp_path,
+        files=[
+            "Season 01/Example{tmdb-123}.S01E01.mkv",
+            "Season 01/Example[tmdbid=456].S01E02.mp4",
+        ],
+    )
+    task, _ = await run_tv(env)
+    assert task.error_code == "tmdb_id_conflict"
+    assert env[4].calls["search:tv"] == env[4].calls["series"] == 0
+    assert not env[3].files
+
+
 async def test_series_embedded_simplified_pgs_skips_subtitle_downloads(foundation, tmp_path):
     env = await setup_tv(foundation, tmp_path, "en")
     db, _, _, dav, _, probe, shooter, _, _ = env
@@ -132,6 +179,7 @@ async def test_chinese_series_entire_package_zero_probe(foundation, tmp_path, la
         assert item.original_language == language and item.details["original_language"] == language
         assert item.subtitle_status == "skipped_tmdb_chinese" and item.probe_status == "not_started"
         nfo = read_nfo(dav.files[item.remote_path.replace(".mkv", ".nfo")], "episodedetails")
+        assert nfo.findtext("tmdbid") == item.details["external_id"]
         assert nfo.findtext("season") == str(item.season) and nfo.findtext("episode") == str(
             item.episode
         )
@@ -287,9 +335,22 @@ async def test_enhancement_http_failure_is_independent_and_can_retry_after_compl
     assert dav.calls["put:tvshow.nfo"] == before["put:tvshow.nfo"]
 
 
-async def test_episode_existing_nfo_progress_preserved_and_wrong_episode_blocks(
-    foundation, tmp_path
-):
+async def test_existing_series_nfo_without_tmdbid_is_preserved(foundation, tmp_path):
+    env = await setup_tv(foundation, tmp_path)
+    path = ROOT + "/tvshow.nfo"
+    original = (
+        b'<tvshow><title>Manual</title><uniqueid type="tmdb">123</uniqueid>'
+        b"<playcount>7</playcount><custom>keep</custom></tvshow>"
+    )
+    env[3].files[path] = original
+    task, _ = await run_tv(env)
+    assert task.status == "completed", task.error_code
+    assert env[3].files[path] == original and env[3].calls["put:tvshow.nfo"] == 0
+    assert read_nfo(env[3].files[path], "tvshow").find("tmdbid") is None
+    assert env[4].calls["search:tv"] == 0
+
+
+async def test_episode_existing_nfo_without_tmdbid_preserves_progress(foundation, tmp_path):
     env = await setup_tv(foundation, tmp_path, "en")
     from reeldock.domain import Episode
     from reeldock.exporter import export_nfo
@@ -298,9 +359,13 @@ async def test_episode_existing_nfo_progress_preserved_and_wrong_episode_blocks(
         source="tmdb", external_id="1101", title="Manual", series_id="123", season=1, episode=1
     )
     path = ROOT + "/Season 01/Example.S01E01.nfo"
-    body = export_nfo(episode, [], tag="episodedetails").replace(
-        b"</episodedetails>",
-        b"<playcount>7</playcount><resume><position>45</position></resume></episodedetails>",
+    body = (
+        export_nfo(episode, [], tag="episodedetails")
+        .replace(b"<tmdbid>1101</tmdbid>", b"")
+        .replace(
+            b"</episodedetails>",
+            b"<playcount>7</playcount><resume><position>45</position></resume></episodedetails>",
+        )
     )
     env[3].files[path] = body
     task, package = await run_tv(env)

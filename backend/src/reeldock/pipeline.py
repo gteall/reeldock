@@ -147,8 +147,10 @@ class MoviePipeline:
         ):
             entries = await self.source(claim, storage, config)
             parsed = parse_name(record.media_path)
-            filename_ids = explicit_ids(package.remote_path) | explicit_ids(record.media_path)
-            ids = set(filename_ids)
+            filename_id = parsed.explicit_id
+            # A filename tag selects the work directly; directory/manual/IMDb hints
+            # are fallbacks. Existing NFOs must still agree before they can be reused.
+            ids = {filename_id} if filename_id else explicit_ids(package.remote_path)
             imdb_identifiers = set(
                 re.findall(
                     r"(?i)(?<![a-z0-9])tt\d{5,12}(?!\d)",
@@ -192,14 +194,17 @@ class MoviePipeline:
                         asset.status, asset.error_code = "failed", error.code
                         session.get(Package, claim.package_id).base_status = "failed"
                     raise
-            if len(imdb_identifiers) > 1:
+            if not filename_id:
+                if len(imdb_identifiers) > 1:
+                    raise ProviderError("tmdb_id_conflict")
+                if imdb_identifiers:
+                    found = await metadata.find_movie(next(iter(imdb_identifiers)).lower())
+                    ids.add(found.external_id)
+            if len(ids) > 1 or (
+                not filename_id and record.manual_id and ids and record.manual_id not in ids
+            ):
                 raise ProviderError("tmdb_id_conflict")
-            if imdb_identifiers:
-                found = await metadata.find_movie(next(iter(imdb_identifiers)).lower())
-                ids.add(found.external_id)
-            if len(ids) > 1 or (record.manual_id and ids and record.manual_id not in ids):
-                raise ProviderError("tmdb_id_conflict")
-            chosen = record.manual_id or next(iter(ids), None)
+            chosen = filename_id or record.manual_id or next(iter(ids), None)
             candidates = record.candidates
             if (
                 record.match_status == "matched"

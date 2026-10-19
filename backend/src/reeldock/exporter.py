@@ -111,6 +111,7 @@ def export_nfo(movie, actors, *, tag="movie", showtitle=None):
     add(root, "premiered", movie.release_date)
     add(root, "originallanguage", movie.original_language)
     add(root, "uniqueid", movie.external_id, type="tmdb", default="true")
+    add(root, "tmdbid", movie.external_id)
     add(root, "uniqueid", movie.imdb_id, type="imdb")
     if tag == "tvshow":
         import json

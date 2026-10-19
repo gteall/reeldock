@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from reeldock.domain import ConfigUpdate, Movie, Person, ProviderError, Stage
 from reeldock.exporter import nfo_ids, read_nfo, validate_image
-from reeldock.matching import automatic_candidate, parse_name, rank_candidates
+from reeldock.matching import VIDEO_EXTENSIONS, automatic_candidate, parse_name, rank_candidates
 from reeldock.models import Asset, MovieRecord, Package, Task, TaskStep
 from reeldock.queue import base_verified
 from reeldock.runtime import Runtime
@@ -78,6 +78,7 @@ async def test_complete_movie_stops_before_subtitle_and_reuses_existing_assets(
     nfo = next(body for path, body in dav.files.items() if path.endswith(".nfo"))
     root = read_nfo(nfo)
     assert root.find("fileinfo") is None and root.find("actor/thumb") is None
+    assert root.findtext("tmdbid") == root.findtext("uniqueid[@type='tmdb']") == "123"
     assert nfo_ids(nfo) == {"123"}
     before = tmdb.calls.copy()
     writes = {k: v for k, v in dav.calls.items() if k.startswith("put:")}
@@ -85,6 +86,81 @@ async def test_complete_movie_stops_before_subtitle_and_reuses_existing_assets(
     assert task.status == "completed"
     assert tmdb.calls["download:poster"] == before["download:poster"]
     assert {k: v for k, v in dav.calls.items() if k.startswith("put:")} == writes
+    forbidden_calls(env)
+
+
+@pytest.mark.parametrize("extension", sorted(VIDEO_EXTENSIONS))
+@pytest.mark.parametrize("brackets", ["{}", "[]"])
+@pytest.mark.parametrize("key", ["tmdb", "tmdbid", "TMDBID"])
+@pytest.mark.parametrize("separator", ["-", "="])
+def test_explicit_tmdb_filename_formats(extension, brackets, key, separator):
+    marker = f"{brackets[0]}{key}{separator}27205{brackets[1]}"
+    parsed = parse_name(f"/movies/文件名xxx{marker}文件名xxx{extension}")
+    assert parsed.explicit_id == "27205"
+    assert parsed.title == "文件名xxx文件名xxx"
+
+
+@pytest.mark.parametrize(
+    "marker,extension",
+    [
+        ("{tmdb-27205}", ".mkv"),
+        ("{tmdbid-27205}", ".mp4"),
+        ("{tmdb=27205}", ".avi"),
+        ("{tmdbid=27205}", ".mov"),
+        ("[tmdb-27205]", ".m4v"),
+        ("[tmdbid-27205]", ".m2ts"),
+        ("[tmdb=27205]", ".ts"),
+        ("[tmdbid=27205]", ".webm"),
+    ],
+)
+async def test_filename_tmdb_id_skips_title_search_and_overrides_manual_choice(
+    foundation, tmp_path, marker, extension
+):
+    env = await setup_pipeline(foundation, tmp_path)
+    db, _, _, config, revision, dav, tmdb, worker, _ = env
+    video = next(iter(dav.media))
+    filename = f"无关片名{marker}另一片名{extension}"
+    dav.media[str(PurePosixPath(video).with_name(filename))] = dav.media.pop(video)
+    tmdb.movies[0] = tmdb.movies[0].model_copy(update={"external_id": "27205"})
+    await worker.movies.scanner.scan(dav, config, revision)
+    with db.sessions.begin() as session:
+        session.scalar(select(MovieRecord)).manual_id = "456"
+    task, package = await run_movie(env)
+    assert task.status == "completed", task.error_code
+    assert package.tmdb_id == "27205"
+    assert tmdb.calls["search"] == 0 and tmdb.calls["details"] == 1
+    nfo = dav.files[package.remote_path + "/" + str(PurePosixPath(filename).with_suffix(".nfo"))]
+    assert read_nfo(nfo).findtext("tmdbid") == "27205"
+    forbidden_calls(env)
+
+
+async def test_filename_tmdb_id_overrides_directory_and_imdb_hints(foundation, tmp_path):
+    env = await setup_pipeline(foundation, tmp_path)
+    dav, tmdb, worker = env[5:8]
+    video = next(iter(dav.media))
+    folder = "/incoming/无关片名{tmdb-456}.tt1234567"
+    dav.directories.remove(str(PurePosixPath(video).parent))
+    dav.directories.add(folder)
+    dav.media[folder + "/文件名[TMDBID=27205].tt7654321.WMV"] = dav.media.pop(video)
+    tmdb.movies[0] = tmdb.movies[0].model_copy(update={"external_id": "27205"})
+    await worker.movies.scanner.scan(dav, env[3], env[4])
+    task, package = await run_movie(env)
+    assert task.status == "completed", task.error_code
+    assert package.tmdb_id == "27205"
+    assert tmdb.calls["search"] == 0 and tmdb.calls["details"] == 1
+    forbidden_calls(env)
+
+
+async def test_missing_filename_tmdb_id_does_not_fall_back_to_title(foundation, tmp_path):
+    env = await setup_pipeline(foundation, tmp_path)
+    dav = env[5]
+    video = next(iter(dav.media))
+    dav.media[video.replace("Example.2020", "Example.2020.{tmdb-27205}")] = dav.media.pop(video)
+    await env[7].movies.scanner.scan(dav, env[3], env[4])
+    task, _ = await run_movie(env)
+    assert task.error_code == "tmdb_not_found"
+    assert env[6].calls["search"] == 0 and env[6].calls["details"] == 1
+    assert not dav.files
     forbidden_calls(env)
 
 
