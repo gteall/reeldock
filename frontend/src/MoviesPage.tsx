@@ -28,6 +28,7 @@ import { directoryTree, visiblePackages } from './library'
 import { Preview, Status } from './MediaAssets'
 import { SubtitleSearch } from './SubtitleSearch'
 import { DeleteMetadataButton } from './DeleteMetadataButton'
+import { PageSizeControl, usePageSize } from './LibraryPageSize'
 
 function assetState(film: Film, kind: string) {
   if (kind === 'actor' && !film.actor_images_enabled)
@@ -66,6 +67,8 @@ export function MoviesPage() {
   const [kind, setKind] = useState('all')
   const [state, setState] = useState('all')
   const [directory, setDirectory] = useState('')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = usePageSize('movies')
   const [checked, setChecked] = useState<string[]>([])
   const [batchResults, setBatchResults] = useState<
     { id: string; accepted: boolean; error_code?: string }[]
@@ -173,6 +176,8 @@ export function MoviesPage() {
   const tree = directoryTree(
     visiblePackages(films.data?.items ?? [], '', 'all', state === 'missing' ? 'missing' : 'all'),
   )
+  const items = visiblePackages(films.data?.items ?? [], filter, kind, state, directory)
+  const current = Math.min(page, Math.max(1, Math.ceil(items.length / pageSize)))
   return (
     <>
       <Alert
@@ -188,12 +193,20 @@ export function MoviesPage() {
             defaultExpandedKeys={['dir:', 'dir:/incoming', 'dir:/library']}
             onSelect={(keys) => {
               const key = String(keys[0] ?? 'dir:')
-              if (key.startsWith('dir:')) setDirectory(key.slice(4))
-              else setSelected(key.split(':')[1])
+              if (key.startsWith('dir:')) {
+                setDirectory(key.slice(4))
+                setPage(1)
+              } else setSelected(key.split(':')[1])
             }}
           />
           {directory && (
-            <Button type="link" onClick={() => setDirectory('')}>
+            <Button
+              type="link"
+              onClick={() => {
+                setDirectory('')
+                setPage(1)
+              }}
+            >
               清除目录筛选
             </Button>
           )}
@@ -215,7 +228,10 @@ export function MoviesPage() {
             <Space wrap style={{ marginBottom: 16 }}>
               <Segmented
                 value={kind}
-                onChange={setKind}
+                onChange={(value) => {
+                  setKind(value)
+                  setPage(1)
+                }}
                 options={[
                   { label: '全部', value: 'all' },
                   { label: '电影', value: 'movie' },
@@ -224,7 +240,10 @@ export function MoviesPage() {
               />
               <Select
                 value={state}
-                onChange={setState}
+                onChange={(value) => {
+                  setState(value)
+                  setPage(1)
+                }}
                 style={{ width: 160 }}
                 options={[
                   { label: '当前媒体', value: 'all' },
@@ -268,12 +287,24 @@ export function MoviesPage() {
                 }
               />
             )}
-            <Input.Search
-              placeholder="搜索片名 / 路径"
-              allowClear
-              onChange={(event) => setFilter(event.target.value)}
-              style={{ maxWidth: 360, marginBottom: 16 }}
-            />
+            <div className="library-list-tools">
+              <Input.Search
+                placeholder="搜索片名 / 路径"
+                allowClear
+                onChange={(event) => {
+                  setFilter(event.target.value)
+                  setPage(1)
+                }}
+                style={{ maxWidth: 360 }}
+              />
+              <PageSizeControl
+                value={pageSize}
+                onChange={(size) => {
+                  setPageSize(size)
+                  setPage(1)
+                }}
+              />
+            </div>
             {films.isError && <Alert type="error" title={String(films.error)} />}
             {state === 'missing' && (
               <Alert
@@ -288,7 +319,14 @@ export function MoviesPage() {
               rowKey="id"
               loading={films.isPending}
               scroll={{ x: 1150 }}
-              dataSource={visiblePackages(films.data?.items ?? [], filter, kind, state, directory)}
+              dataSource={items}
+              pagination={{
+                current,
+                pageSize,
+                showSizeChanger: false,
+                showTotal: (total) => `共 ${total} 部`,
+                onChange: setPage,
+              }}
               rowSelection={{
                 selectedRowKeys: selectedPackages.map((f) => f.id),
                 onChange: (keys) => setChecked(keys.map(String)),

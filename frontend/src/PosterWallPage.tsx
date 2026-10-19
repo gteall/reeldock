@@ -6,8 +6,7 @@ import type { Film } from './api'
 import { CachedImage } from './CachedImage'
 import { artwork, posterPackages, scrapedPackages } from './posters'
 import { filmLink } from './navigation'
-
-const pageSize = 24
+import { PageSizeControl, usePageSize } from './LibraryPageSize'
 
 export interface PosterWallView {
   search: string
@@ -25,6 +24,7 @@ export function PosterWallPage({
   onChange: (view: PosterWallView) => void
 }) {
   const { search, kind, state, sort, page } = view
+  const [pageSize, setPageSize] = usePageSize('posters')
   const query = useQuery({
     queryKey: ['movies'],
     queryFn: () => api<{ items: Film[] }>('/packages'),
@@ -79,6 +79,13 @@ export function PosterWallPage({
             { label: '评分从高到低', value: 'rating' },
           ]}
         />
+        <PageSizeControl
+          value={pageSize}
+          onChange={(size) => {
+            setPageSize(size)
+            onChange({ ...view, page: 1 })
+          }}
+        />
         <Button
           icon={<ReloadOutlined />}
           loading={query.isFetching}
@@ -114,7 +121,7 @@ export function PosterWallPage({
               {library.filter((film) => film.kind === 'movie').length} 部电影 ·{' '}
               {library.filter((film) => film.kind === 'tv').length} 部电视剧
             </span>
-            <span>当前显示 {items.length} 部</span>
+            <span>筛选结果 {items.length} 部</span>
           </div>
           {!items.length ? (
             <div className="poster-empty">

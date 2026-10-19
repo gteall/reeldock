@@ -574,6 +574,22 @@ pre {
   justify-content: center;
   margin-top: 32px;
 }
+.library-list-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.page-size-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.page-size-control .ant-input-number {
+  width: 100px;
+}
 .poster-empty {
   display: grid;
   place-items: center;
