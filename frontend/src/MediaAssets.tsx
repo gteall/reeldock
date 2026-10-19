@@ -10,8 +10,9 @@ const names: Record<string, string> = {
   not_applicable: '不适用',
   all_media_verified: '全部媒体字幕策略通过',
   superseded: '已归入剧包',
-  stable: '已稳定',
-  waiting_stable: '等待稳定',
+  stable: '可刮削',
+  waiting_stable: '需重新扫描',
+  needs_scan: '需重新扫描',
   needs_review: '待确认',
   missing: '源已消失',
   pending: '未开始',
@@ -45,7 +46,7 @@ export function Status({ value }: { value: string }) {
     ? 'success'
     : ['failed', 'blocked'].includes(value)
       ? 'error'
-      : ['waiting_stable', 'needs_review', 'existing_unverified'].includes(value)
+      : ['waiting_stable', 'needs_scan', 'needs_review', 'existing_unverified'].includes(value)
         ? 'warning'
         : undefined
   return <Tag color={color}>{names[value] ?? value}</Tag>

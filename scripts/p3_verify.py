@@ -10,7 +10,6 @@ import asyncio
 import json
 import subprocess
 import sys
-import time
 import uuid
 from contextlib import nullcontext
 from pathlib import Path
@@ -81,7 +80,6 @@ async def webdav(args, *, tv=False):
         webdav_username=values.get("P0_WEBDAV_USERNAME") or "",
         webdav_password=values.get("P0_WEBDAV_PASSWORD"),
         scrape_paths=[root + "/input"],
-        stable_seconds=1,
         http_timeout_seconds=30,
         redirect_hosts=[
             h.strip() for h in (values.get("P0_REDIRECT_HOSTS") or "").split(",") if h.strip()
@@ -146,7 +144,6 @@ async def webdav(args, *, tv=False):
                     ) as response:
                         if response.status_code not in {200, 201, 204}:
                             raise ProviderError("fixture_upload_failed")
-                await worker.movies.scanner.scan(dav, config, 1, now=time.time() - 2)
                 await worker.movies.scanner.scan(dav, config, 1)
             task_id = queue.submit("package_pipeline", package_path, "real-" + phase + "-test", 1)
             await worker.execute(queue.claim("p3-test"))

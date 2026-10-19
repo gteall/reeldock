@@ -324,7 +324,6 @@ def run(args, checks):
             client.cookies.clear()
             login(client, password)
             config.update(
-                stable_seconds=1,
                 scrape_actor_images=True,
                 probe_timeout_seconds=90,
                 probe_max_bytes=2097152,
@@ -337,8 +336,6 @@ def run(args, checks):
                 wait_task(client, response.json()["task_id"], "completed")
 
             scan("first-scan")
-            time.sleep(1.1)
-            scan("stable-scan")
             packages = client.get("/api/packages").json()["items"]
             assert len(packages) == 4 and all(p["scan_status"] == "stable" for p in packages)
             for name in ["ChineseMovie", "ChineseTV"]:

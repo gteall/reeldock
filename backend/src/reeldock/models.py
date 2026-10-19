@@ -125,9 +125,10 @@ class MovieRecord(Base):
     title: Mapped[str] = mapped_column(Text, default="")
     year: Mapped[int | None] = mapped_column(Integer)
     media_path: Mapped[str | None] = mapped_column(Text)
+    # Retain the legacy column so existing databases need no schema rebuild.
     stable_since: Mapped[float] = mapped_column(Float, default=time.time)
     last_seen: Mapped[float] = mapped_column(Float, default=time.time)
-    scan_status: Mapped[str] = mapped_column(String(40), default="waiting_stable")
+    scan_status: Mapped[str] = mapped_column(String(40), default="needs_scan")
     match_status: Mapped[str] = mapped_column(String(40), default="pending")
     manual_id: Mapped[str | None] = mapped_column(String(32))
     candidates: Mapped[list] = mapped_column(JSON, default=list)

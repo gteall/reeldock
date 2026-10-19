@@ -1,4 +1,3 @@
-import time
 from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
@@ -93,7 +92,7 @@ async def setup_tv(foundation, tmp_path, original="zh", files=None):
     config, revision = store.load()
     store.save(
         ConfigUpdate(
-            **{**config.model_dump(), "stable_seconds": 1},
+            **config.model_dump(),
             expected_revision=revision,
         )
     )
@@ -118,7 +117,6 @@ async def setup_tv(foundation, tmp_path, original="zh", files=None):
         probe=probe,
         subtitle_factory=shooter,
     )
-    await worker.movies.scanner.scan(dav, config, revision, now=time.time() - 2)
     await worker.movies.scanner.scan(dav, config, revision)
     return db, store, queue, dav, metadata, probe, shooter, worker, revision
 

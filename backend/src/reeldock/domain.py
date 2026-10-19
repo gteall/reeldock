@@ -57,7 +57,6 @@ class AppConfig(BaseModel):
     probe_max_bytes: int = Field(default=67108864, ge=16384, le=1073741824)
     chinese_languages: list[str] = Field(default_factory=lambda: ["zh", "cn"], min_length=1)
     policy_version: int = Field(default=1, ge=1)
-    stable_seconds: int = Field(default=600, ge=1, le=86400)
     actor_limit: int = Field(default=20, ge=0, le=500)
     scrape_actor_images: bool = False
     actor_policy: str = Field(default="available_only", pattern=r"^(available_only|strict)$")

@@ -1,6 +1,5 @@
 import asyncio
 import json
-import time
 
 import httpx
 import pytest
@@ -116,9 +115,6 @@ async def test_marker_restores_embedded_result_into_fresh_database_without_probe
             subtitle_factory=env[6],
         )
         config, revision = store.load()
-        await worker.movies.scanner.scan(
-            dav, config, revision, now=time.time() - config.stable_seconds - 1
-        )
         await worker.movies.scanner.scan(dav, config, revision)
         previous = env[5].calls.copy()
         rebuilt = (db, store, queue, dav, env[4], env[5], env[6], worker, revision)
@@ -252,7 +248,6 @@ async def test_manual_marker_restores_confirmation_and_rejects_changed_source(ma
     assert probe.calls == previous
     dav.media[next(iter(dav.media))] += 1
     config, revision = client.app.state.store.load()
-    await client.app.state.worker.movies.scanner.scan(dav, config, revision, now=time.time() - 2)
     await client.app.state.worker.movies.scanner.scan(dav, config, revision)
     result = client.post(
         "/api/batch/tasks", json={"package_ids": [film["id"]], "idempotency_key": "changed-source"}

@@ -1,4 +1,3 @@
-import time
 from contextlib import contextmanager
 from pathlib import PurePosixPath
 
@@ -41,15 +40,12 @@ def tv_app(runtime, config_body, files=None):
         client.headers.update(
             {"Origin": "http://localhost:8000", "X-CSRF-Token": result.json()["csrf_token"]}
         )
-        assert (
-            client.put("/api/config", json={**config_body, "stable_seconds": 1}).status_code == 200
-        )
+        assert client.put("/api/config", json=config_body).status_code == 200
         yield app, client, dav, metadata, probe, shooter
 
 
 async def scan(app, dav):
     config, revision = app.state.store.load()
-    await app.state.worker.movies.scanner.scan(dav, config, revision, now=time.time() - 2)
     await app.state.worker.movies.scanner.scan(dav, config, revision)
 
 
@@ -65,6 +61,7 @@ async def test_manual_mapping_stale_duplicate_and_resume(runtime, config_body):
         body["episode"] = 2
         assert client.put(url, json=body, headers={"X-CSRF-Token": "bad"}).status_code == 403
         assert client.put(url, json=body).status_code == 200
+        assert client.get("/api/packages/" + package["id"]).json()["scan_status"] == "needs_scan"
         assert client.put(url, json=body).status_code == 409
         await scan(app, dav)
         mapped = client.get("/api/packages").json()["items"][0]

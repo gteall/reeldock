@@ -566,7 +566,7 @@ def create_app(
             item.mapping_status, item.error_code = "mapped", None
             invalidate_package(package, "episode_mapping_changed")
             record = session.get(MovieRecord, package.id)
-            record.scan_status, record.error_code = "waiting_stable", None
+            record.scan_status, record.error_code = "needs_scan", None
             if session.get(SeasonRecord, (package_id, body.season)) is None:
                 session.add(SeasonRecord(package_id=package_id, number=body.season))
             session.add(

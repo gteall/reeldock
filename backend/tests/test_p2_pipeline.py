@@ -39,7 +39,6 @@ async def setup_pipeline(foundation, tmp_path, **config_changes):
         handlers={Stage.SUBTITLE: no_subtitle},
     )
     scanner = worker.movies.scanner
-    await scanner.scan(dav, config, revision, now=time.time() - config.stable_seconds - 1)
     await scanner.scan(dav, config, revision)
     return db, store, queue, config, revision, dav, tmdb, worker, forbidden
 
@@ -246,24 +245,42 @@ async def test_actor_collision_does_not_silently_suffix(foundation, tmp_path):
     forbidden_calls(env)
 
 
-async def test_scan_stability_download_markers_source_change_and_no_content_reads(
+async def test_scan_once_ready_source_change_download_markers_and_no_content_reads(
     foundation, tmp_path
 ):
     env = await setup_pipeline(foundation, tmp_path)
     db, _, _, config, revision, dav, _, worker, _ = env
     scanner = worker.movies.scanner
-    video = next(iter(dav.media))
-    dav.media[video] += 1
-    await scanner.scan(dav, config, revision, now=100)
     with db.sessions.begin() as session:
-        assert session.scalar(select(MovieRecord)).scan_status == "waiting_stable"
-    await scanner.scan(dav, config, revision, now=100 + config.stable_seconds)
+        record = session.scalar(select(MovieRecord))
+        assert record.scan_status == "stable"
+        package = session.get(Package, record.package_id)
+        version = package.context_version
+        # Records left waiting by an older version need only one scan, at any time.
+        record.scan_status, record.stable_since = "waiting_stable", 1000
+    await scanner.scan(dav, config, revision, now=1000)
     with db.sessions.begin() as session:
         assert session.scalar(select(MovieRecord)).scan_status == "stable"
+        assert session.get(Package, package.id).context_version == version
+    video = next(iter(dav.media))
+    dav.media[video] += 1
+    await scanner.scan(dav, config, revision, now=1000)
+    with db.sessions.begin() as session:
+        assert session.scalar(select(MovieRecord)).scan_status == "stable"
+        assert session.get(Package, package.id).context_version == version + 1
     dav.files[video + ".part"] = b""
     await scanner.scan(dav, config, revision)
     with db.sessions.begin() as session:
+        assert session.scalar(select(MovieRecord)).scan_status == "needs_review"
         assert session.scalar(select(MovieRecord)).error_code == "download_in_progress"
+    del dav.files[video + ".part"]
+    await scanner.scan(dav, config, revision)
+    with db.sessions.begin() as session:
+        assert session.scalar(select(MovieRecord)).scan_status == "stable"
+    dav.media[video] = 0
+    await scanner.scan(dav, config, revision)
+    with db.sessions.begin() as session:
+        assert session.scalar(select(MovieRecord)).error_code == "media_size_unknown"
     forbidden_calls(env)
 
 
@@ -346,7 +363,13 @@ async def test_source_changes_during_upload_invalidate_evidence(foundation, tmp_
     assert task.error_code == "source_changed_scan_again"
     with env[0].sessions.begin() as session:
         assert not base_verified(session, session.get(Package, package.id))
-        assert session.get(MovieRecord, package.id).scan_status == "waiting_stable"
+        assert session.get(MovieRecord, package.id).scan_status == "needs_scan"
+    task, _ = await run_movie(env, "before-rescan")
+    assert task.error_code == "package_not_ready"
+    dav.put = original
+    await env[7].movies.scanner.scan(dav, env[3], env[4])
+    task, _ = await run_movie(env, "after-one-rescan")
+    assert task.status == "completed", task.error_code
     forbidden_calls(env)
 
 

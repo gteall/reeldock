@@ -117,7 +117,7 @@ def main():
                 if result["status"] == "blocked":
                     break
                 time.sleep(0.05)
-            assert result["error_code"] == "package_not_stable"
+            assert result["error_code"] == "package_not_ready"
             checks.append("honest_p2_base_stage_boundary")
         print(json.dumps({"status": "passed", "checks": checks, "real_media_moves": 0}))
     finally:

@@ -162,13 +162,12 @@ class Scanner:
                         package_id=package.id,
                         title=name.title if name else PurePosixPath(path).name,
                         year=name.year if name else None,
-                        stable_since=now,
                         last_seen=now,
                     )
                     session.add(record)
                 if changed:
                     revise_package(session, package, source_snapshot=snapshot)
-                    record.stable_since, record.match_status = now, "pending"
+                    record.match_status = "pending"
                     record.details, record.cast, record.artwork, record.candidates = {}, [], [], []
                     if name:
                         record.title, record.year = name.title, name.year
@@ -229,10 +228,9 @@ class Scanner:
                 reason = name_error or package_reason(
                     path, config.root_for(path), entries, videos, kind, mappings
                 )
-                stable = not changed and now - record.stable_since >= config.stable_seconds
-                record.scan_status = (
-                    "needs_review" if reason else ("stable" if stable else "waiting_stable")
-                )
+                # Keep the persisted ready status compatible with existing clients.
+                # One complete listing is enough; source changes are checked by each job.
+                record.scan_status = "needs_review" if reason else "stable"
                 record.error_code = reason
                 observed = {e.path: e for e in entries if not e.is_dir}
                 for existing in session.scalars(

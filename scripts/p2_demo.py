@@ -45,7 +45,6 @@ def main():
                 webdav_url="https://dav.example/dav/",
                 scrape_paths=["/incoming"],
                 tmdb_token="mock-only-token",
-                stable_seconds=1,
             )
         )
     db.close()

@@ -2,7 +2,6 @@
 
 import asyncio
 import socket
-import time
 
 import httpx
 import uvicorn
@@ -41,16 +40,13 @@ async def test_http_worker_sse_disconnect_replay_and_state_refetch(runtime, conf
                     await asyncio.sleep(0.02)
                 assert server.started
                 init_admin(app.state.db, "admin", "p4-http-test-password")
-                app.state.store.save(ConfigUpdate(**{**config_body, "stable_seconds": 1}))
+                app.state.store.save(ConfigUpdate(**config_body))
                 auth = await client.post(
                     "/api/auth/login",
                     json={"username": "admin", "password": "p4-http-test-password"},
                 )
                 client.headers["X-CSRF-Token"] = auth.json()["csrf_token"]
                 config, revision = app.state.store.load()
-                await app.state.worker.movies.scanner.scan(
-                    dav, config, revision, now=time.time() - 2
-                )
                 await app.state.worker.movies.scanner.scan(dav, config, revision)
                 cursor = 0
                 async with client.stream("GET", "/api/events/stream") as response:

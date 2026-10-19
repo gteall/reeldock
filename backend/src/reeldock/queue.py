@@ -232,10 +232,10 @@ class Queue:
                     raise ProviderError("context_changed_submit_new_task")
                 record = session.get(MovieRecord, package.id)
                 if not record or record.scan_status in {"missing", "superseded"}:
-                    raise ProviderError("package_not_stable")
+                    raise ProviderError("package_not_ready")
                 if kind == "subtitle_apply":
                     if record.scan_status != "stable":
-                        raise ProviderError("package_not_stable")
+                        raise ProviderError("package_not_ready")
                     gate(session, package, "subtitle_apply")
                 if (
                     package.lease_owner and (package.lease_until or 0) > time.time()

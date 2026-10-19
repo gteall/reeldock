@@ -1,11 +1,7 @@
-import time
-
 from fastapi.testclient import TestClient
 from p2_support import FakeTMDB, MemoryDAV
-from sqlalchemy import select
 
 from reeldock.app import create_app
-from reeldock.models import MovieRecord
 from reeldock.security import init_admin
 
 
@@ -36,7 +32,6 @@ def test_p2_movie_api_match_preview_and_auth(runtime, config_body):
         client.headers.update(
             {"Origin": "http://localhost:8000", "X-CSRF-Token": login.json()["csrf_token"]}
         )
-        config_body["stable_seconds"] = 1
         assert client.put("/api/config", json=config_body).status_code == 200
         worker, queue = app.state.worker, app.state.queue
         import asyncio
@@ -44,15 +39,8 @@ def test_p2_movie_api_match_preview_and_auth(runtime, config_body):
         def execute():
             asyncio.run(worker.execute(queue.claim("api-test")))
 
-        for number in [1, 2]:
-            assert (
-                client.post("/api/scan", json={"idempotency_key": f"scan-{number}"}).status_code
-                == 202
-            )
-            execute()
-            if number == 1:
-                with app.state.db.sessions.begin() as session:
-                    session.scalar(select(MovieRecord)).stable_since = time.time() - 2
+        assert client.post("/api/scan", json={"idempotency_key": "scan-once"}).status_code == 202
+        execute()
         movie = client.get("/api/movies").json()["items"][0]
         assert movie["scan_status"] == "stable"
         assert movie["metadata"]["overview"] == ""
@@ -124,6 +112,7 @@ def test_upgrade_existing_p1_configuration_and_tasks(tmp_path, config_body):
     from reeldock.models import Configuration, Task
     from reeldock.security import SettingsStore, Vault
 
+    config_body["stable_seconds"] = 86400
     db = Database(tmp_path / "upgrade.sqlite3")
     alembic = Config()
     alembic.set_main_option("script_location", str(Path(migrations.__path__[0])))
@@ -158,7 +147,8 @@ def test_upgrade_existing_p1_configuration_and_tasks(tmp_path, config_body):
     db.migrate()
     db.migrate()
     config, revision = SettingsStore(db, vault).load()
-    assert revision == 1 and config.stable_seconds == 600 and config.actor_limit == 20
+    assert revision == 1 and config.actor_limit == 20
+    assert "stable_seconds" not in config.model_dump()
     with db.sessions.begin() as session:
         assert session.get(Task, task_id).status == "queued"
         assert session.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0004"

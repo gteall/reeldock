@@ -1,5 +1,4 @@
 import json
-import time
 
 import httpx
 import pytest
@@ -49,7 +48,10 @@ def test_config_defaults_to_multiple_directories_and_no_actor_images(client, con
     assert response.status_code == 200
     assert response.json()["scrape_paths"] == ["/incoming", "/电影"]
     assert response.json()["scrape_actor_images"] is False
-    assert not {"input_path", "output_path", "move_verified"} & response.json().keys()
+    assert (
+        not {"input_path", "output_path", "move_verified", "stable_seconds"}
+        & response.json().keys()
+    )
 
 
 def test_encrypted_legacy_configuration_loads_without_archive(foundation):
@@ -81,7 +83,6 @@ async def test_scans_multiple_and_overlapping_roots_and_enforces_scope(client, c
     dav.media["/library/Second/Second.2024.mkv"] = 1024**3
     config, revision = app.state.store.load()
     assert config.scan_roots == ["/incoming", "/library"]
-    await app.state.worker.movies.scanner.scan(dav, config, revision, now=time.time() - 601)
     result = await app.state.worker.movies.scanner.scan(dav, config, revision)
     assert result["packages"] == 2
     views = client.get("/api/packages").json()["items"]
@@ -122,7 +123,6 @@ async def test_configured_movie_directory_itself_can_be_scraped(foundation):
     from reeldock.scanner import Scanner
 
     scanner = Scanner(db)
-    await scanner.scan(dav, config, revision, now=time.time() - 601)
     await scanner.scan(dav, config, revision)
     with db.sessions.begin() as session:
         assert session.scalar(select(MovieRecord)).scan_status == "stable"

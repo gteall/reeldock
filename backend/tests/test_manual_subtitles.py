@@ -1,5 +1,4 @@
 import json
-import time
 
 import httpx
 import pytest
@@ -89,9 +88,7 @@ def manual_app(runtime, config_body, request):
         client.headers.update(
             {"Origin": "http://localhost:8000", "X-CSRF-Token": login.json()["csrf_token"]}
         )
-        assert (
-            client.put("/api/config", json={**config_body, "stable_seconds": 1}).status_code == 200
-        )
+        assert client.put("/api/config", json=config_body).status_code == 200
         yield client, dav, metadata, probe, shooter, manual
 
 
@@ -99,7 +96,6 @@ async def failed_movie(env, expected_error="subtitle_no_match"):
     client = env[0]
     worker = client.app.state.worker
     config, revision = client.app.state.store.load()
-    await worker.movies.scanner.scan(env[1], config, revision, now=time.time() - 2)
     await worker.movies.scanner.scan(env[1], config, revision)
     task = client.post(
         "/api/tasks",
@@ -120,7 +116,6 @@ def configure_token(client, config_body):
         "/api/config",
         json={
             **config_body,
-            "stable_seconds": 1,
             "assrt_token": "private-assrt-token",
             "expected_revision": revision,
         },

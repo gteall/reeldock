@@ -1,6 +1,5 @@
 import asyncio
 import copy
-import time
 from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import PurePosixPath
@@ -163,9 +162,6 @@ async def setup(foundation, tmp_path, original="en", audio="eng", **changes):
         metadata_factory=tmdb,
         probe=probe,
         subtitle_factory=shooter,
-    )
-    await worker.movies.scanner.scan(
-        dav, config, revision, now=time.time() - config.stable_seconds - 1
     )
     await worker.movies.scanner.scan(dav, config, revision)
     return db, store, queue, dav, tmdb, probe, shooter, worker, revision

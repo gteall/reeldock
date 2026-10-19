@@ -178,7 +178,6 @@ function SettingsPage() {
     if (query.data)
       form.setFieldsValue({
         http_timeout_seconds: 15,
-        stable_seconds: 600,
         actor_limit: 20,
         scrape_actor_images: false,
         scrape_paths: ['/incoming'],
@@ -360,14 +359,7 @@ function SettingsPage() {
             <InputNumber min={1} max={120} />
           </Form.Item>
         </Card>
-        <Card title="扫描与演员策略" className="form-card">
-          <Form.Item
-            name="stable_seconds"
-            label="稳定窗口（秒）"
-            extra="至少两次扫描文件集合、大小和版本一致；默认 600 秒。"
-          >
-            <InputNumber min={1} max={86400} />
-          </Form.Item>
+        <Card title="演员策略" className="form-card">
           <Form.Item name="scrape_actor_images" valuePropName="checked">
             <Checkbox>刮削演员头像（默认关闭）</Checkbox>
           </Form.Item>

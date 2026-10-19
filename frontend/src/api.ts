@@ -72,8 +72,10 @@ const messages: Record<string, string> = {
   upload_verification_failed: '上传后内容不一致，已停止；请核对或移除专用测试坏文件后重试',
   actor_source_missing: '严格模式下演员来源无图，请人工补图后重试',
   actor_filename_collision: '演员头像文件名冲突，请人工核对',
-  package_not_stable: '媒体包尚未稳定，请扫描并等待稳定窗口',
-  source_changed_scan_again: '源文件发生变化，请重新扫描并等待稳定',
+  package_not_ready: '媒体尚未准备好，请扫描目录并处理提示的问题',
+  package_not_stable: '媒体尚未准备好，请扫描目录并处理提示的问题',
+  source_changed: '源文件发生变化，请重新扫描',
+  source_changed_scan_again: '源文件发生变化，请重新扫描',
   source_missing: '扫描时未找到源媒体，请检查媒体目录并重新扫描',
   loose_media_requires_directory: '散放视频需要整理为独立目录',
   multiple_media_requires_review: '同一目录包含多个视频，需要人工整理',
@@ -166,7 +168,6 @@ export interface Config {
   probe_timeout_seconds?: number
   probe_max_bytes?: number
   chinese_languages?: string[]
-  stable_seconds?: number
   actor_limit?: number
   actor_policy?: string
   scrape_actor_images?: boolean

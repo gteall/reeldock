@@ -89,7 +89,7 @@ export function MoviesPage() {
       }),
     onSuccess: () => {
       refresh()
-      message.success('扫描已排队；稳定窗口结束后请再次扫描')
+      message.success('扫描已排队，完成后即可刮削')
     },
     onError: error,
   })
@@ -314,7 +314,7 @@ export function MoviesPage() {
                     description={
                       state === 'missing'
                         ? '没有源已消失的历史记录'
-                        : '保存连接配置后扫描目录，至少两次扫描用于判断稳定'
+                        : '保存连接配置后扫描目录，一次扫描通过即可刮削'
                     }
                   />
                 ),
@@ -339,7 +339,7 @@ export function MoviesPage() {
                   ),
                 },
                 {
-                  title: '稳定性',
+                  title: '扫描状态',
                   dataIndex: 'scan_status',
                   render: (value) => <Status value={value} />,
                 },
@@ -403,7 +403,7 @@ export function MoviesPage() {
               column={2}
               items={[
                 { key: 'path', label: '远程目录', children: film.path, span: 2 },
-                { key: 'stable', label: '稳定性', children: <Status value={film.scan_status} /> },
+                { key: 'scan', label: '扫描状态', children: <Status value={film.scan_status} /> },
                 { key: 'id', label: 'TMDB ID', children: film.tmdb_id ?? '尚未匹配' },
                 {
                   key: 'lang',

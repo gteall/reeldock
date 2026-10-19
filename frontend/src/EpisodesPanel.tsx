@@ -316,7 +316,7 @@ export function EpisodesPanel({
                 })
                 setMapping(null)
                 refresh()
-                message.success('编号已保存，请再次扫描确认稳定后启动任务')
+                message.success('编号已保存，请重新扫描后启动任务')
               } catch (error) {
                 message.error(error instanceof Error ? error.message : '保存失败')
               } finally {

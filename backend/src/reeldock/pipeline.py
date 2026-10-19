@@ -77,7 +77,7 @@ class MoviePipeline:
                 record.scan_status != "stable"
                 and not (claim.kind == "asset_retry" and record.scan_status == "archived")
             ):
-                raise ProviderError("package_not_stable")
+                raise ProviderError("package_not_ready")
             return package, record
 
     async def scan(self, claim):
@@ -129,7 +129,7 @@ class MoviePipeline:
                 self.queue._current(session, task, current)
                 revise_package(session, current, source_snapshot=snapshot)
                 row = session.get(MovieRecord, current.id)
-                row.scan_status, row.stable_since = "waiting_stable", time.time()
+                row.scan_status = "needs_scan"
                 row.error_code = reason or "source_changed"
             raise ProviderError("source_changed_scan_again")
         self.check(claim)
